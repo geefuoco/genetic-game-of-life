@@ -87,3 +87,54 @@ fn invalid_founding_allele_count_fails_with_a_message() {
     assert!(!output.status.success());
     assert!(!output.stderr.is_empty());
 }
+
+#[test]
+fn stats_count_the_living_alleles() {
+    let json = stats(&[
+        "--seed",
+        "7",
+        "--width",
+        "16",
+        "--height",
+        "16",
+        "--density",
+        "1.0",
+        "--alleles",
+        "3",
+        "--generations",
+        "0",
+    ]);
+    assert_eq!(json["living_alleles"], 3);
+}
+
+#[test]
+fn mutation_flags_change_the_run() {
+    let base = [
+        "--seed",
+        "3",
+        "--rule",
+        "day-and-night",
+        "--generations",
+        "20",
+    ];
+    let off = stats(&[&base[..], &["--mutation-rate", "0"]].concat());
+    let high = stats(
+        &[
+            &base[..],
+            &["--mutation-rate", "0.5", "--mutation-magnitude", "90"],
+        ]
+        .concat(),
+    );
+    assert_eq!(off["population"], high["population"]);
+    assert!(off["living_alleles"].as_u64().unwrap() <= 4);
+    assert!(high["living_alleles"].as_u64().unwrap() > 4);
+}
+
+#[test]
+fn invalid_mutation_settings_fail_with_a_message() {
+    for flags in [["--mutation-rate", "1.5"], ["--mutation-magnitude", "200"]] {
+        let output = run(&[&["--seed", "1"][..], &flags].concat());
+        assert!(!output.status.success());
+        assert!(!output.stderr.is_empty());
+    }
+}

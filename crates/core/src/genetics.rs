@@ -3,6 +3,8 @@
 //! Only add, subtract, multiply and divide are used on hues, so results are
 //! identical natively and in WASM.
 
+use crate::allele_tree::AlleleId;
+
 /// Highest Dominance Level an Allele can have.
 pub const MAX_DOMINANCE: u8 = 3;
 
@@ -18,15 +20,13 @@ pub struct Allele {
     pub dominance: u8,
 }
 
-/// Index of an Allele in a World's list of Alleles.
-pub(crate) type AlleleId = u16;
-
 /// The pair of Alleles a live Cell carries.
 pub(crate) type Genotype = [AlleleId; 2];
 
 /// Census line for one living Allele.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AlleleCensus {
+    pub id: AlleleId,
     pub allele: Allele,
     /// Copies carried by live Cells; each live Cell carries two.
     pub copies: usize,
@@ -41,7 +41,7 @@ pub struct AlleleCensus {
 pub struct Census {
     pub population: usize,
     pub generation: u64,
-    /// Every living Allele, in Founding order.
+    /// Every living Allele, in id order.
     pub alleles: Vec<AlleleCensus>,
     /// Living Alleles that no live Cell shows.
     pub fully_hidden: Vec<Allele>,
@@ -49,13 +49,19 @@ pub struct Census {
     pub population_history: Vec<usize>,
 }
 
+/// Wraps a hue within one turn of the wheel into `0.0..360.0`.
 pub(crate) fn wrap(hue: f64) -> f64 {
-    if hue < 0.0 {
+    let wrapped = if hue < 0.0 {
         hue + 360.0
     } else if hue >= 360.0 {
         hue - 360.0
     } else {
         hue
+    };
+    if wrapped >= 360.0 {
+        0.0
+    } else {
+        wrapped
     }
 }
 

@@ -1,8 +1,22 @@
-use genetic_life_core::{Allele, Rule, World, DEAD_PHENOTYPE, MAX_DOMINANCE};
+use genetic_life_core::{Allele, MutationSettings, Rule, World, DEAD_PHENOTYPE, MAX_DOMINANCE};
 use proptest::prelude::*;
 
 fn allele(hue: f64, dominance: u8) -> Allele {
     Allele { hue, dominance }
+}
+
+fn without_mutation(mut world: World) -> World {
+    world.set_mutation(MutationSettings::new(0.0, 0.0).unwrap());
+    world
+}
+
+fn founding_alleles(world: &World) -> Vec<Allele> {
+    world
+        .allele_tree()
+        .iter()
+        .filter(|node| node.source.is_none())
+        .map(|node| node.allele)
+        .collect()
 }
 
 /// A 16x16 World with an L-shaped trio of Parents around the dead Cell (5, 5),
@@ -12,7 +26,7 @@ fn trio(alleles: &[Allele], genotype: (usize, usize)) -> World {
         .iter()
         .map(|&(x, y)| (x, y, genotype.0, genotype.1))
         .collect();
-    World::from_genotypes(16, 16, 1, alleles, &live).unwrap()
+    without_mutation(World::from_genotypes(16, 16, 1, alleles, &live).unwrap())
 }
 
 /// The Phenotype of a child whose Parents are both `(first, second)`-typed.
@@ -62,13 +76,14 @@ fn phenotype_buffer_has_one_value_per_cell_and_marks_dead_cells() {
     assert_eq!(buffer.iter().filter(|&&v| v == DEAD_PHENOTYPE).count(), 255);
 }
 
-/// Blends are only ever displayed: after many Generations of crosses, the
-/// Alleles still alive are exactly Founding Alleles, so no blend was inherited.
+/// Blends are only ever displayed: after many Generations of crosses without
+/// Mutation, the Alleles still alive are exactly Founding Alleles, so no blend
+/// was inherited.
 #[test]
 fn blended_cells_pass_on_original_alleles_never_the_blend() {
     for seed in 0..20 {
-        let mut world = World::soup_with_alleles(32, 32, 0.4, seed, 3).unwrap();
-        let founding = world.alleles().to_vec();
+        let mut world = without_mutation(World::soup_with_alleles(32, 32, 0.4, seed, 3).unwrap());
+        let founding = founding_alleles(&world);
         world.run(40);
         let census = world.census();
         assert!(census.alleles.iter().all(|a| founding.contains(&a.allele)));
@@ -82,7 +97,8 @@ fn a_birth_never_takes_both_alleles_from_the_same_parent() {
     let alleles = [allele(0.0, 0), allele(100.0, 0), allele(200.0, 0)];
     for seed in 0..200 {
         let live = [(4, 4, 0, 0), (5, 4, 1, 1), (4, 5, 2, 2)];
-        let mut world = World::from_genotypes(16, 16, seed, &alleles, &live).unwrap();
+        let mut world =
+            without_mutation(World::from_genotypes(16, 16, seed, &alleles, &live).unwrap());
         world.step();
         let child = world.phenotypes()[5 * 16 + 5];
         let hues = alleles.map(|a| a.hue);
@@ -92,18 +108,18 @@ fn a_birth_never_takes_both_alleles_from_the_same_parent() {
 
 #[test]
 fn founding_alleles_are_evenly_spaced_and_deterministic_from_the_seed() {
-    let a = World::soup_with_alleles(32, 32, 0.4, 99, 4).unwrap();
-    let b = World::soup_with_alleles(32, 32, 0.4, 99, 4).unwrap();
-    assert_eq!(a.alleles(), b.alleles());
-    assert_eq!(a.alleles().len(), 4);
+    let a = founding_alleles(&World::soup_with_alleles(32, 32, 0.4, 99, 4).unwrap());
+    let b = founding_alleles(&World::soup_with_alleles(32, 32, 0.4, 99, 4).unwrap());
+    assert_eq!(a, b);
+    assert_eq!(a.len(), 4);
     for pair in 0..4 {
-        let gap = a.alleles()[(pair + 1) % 4].hue - a.alleles()[pair].hue;
+        let gap = a[(pair + 1) % 4].hue - a[pair].hue;
         let gap = if gap <= 0.0 { gap + 360.0 } else { gap };
         assert!((gap - 90.0).abs() < 1e-9, "gap {gap}");
     }
-    assert!(a.alleles().iter().all(|a| a.dominance <= MAX_DOMINANCE));
-    let c = World::soup_with_alleles(32, 32, 0.4, 100, 4).unwrap();
-    assert_ne!(a.alleles(), c.alleles());
+    assert!(a.iter().all(|a| a.dominance <= MAX_DOMINANCE));
+    let c = founding_alleles(&World::soup_with_alleles(32, 32, 0.4, 100, 4).unwrap());
+    assert_ne!(a, c);
 }
 
 #[test]

@@ -1,5 +1,5 @@
 use clap::Parser;
-use genetic_life_core::{Census, Rule, World, DEFAULT_FOUNDING_ALLELES};
+use genetic_life_core::{Census, MutationSettings, Rule, World, DEFAULT_FOUNDING_ALLELES};
 use serde::Serialize;
 use std::process::ExitCode;
 
@@ -25,6 +25,12 @@ struct Args {
     /// Number of Founding Alleles (1 to 16).
     #[arg(long, default_value_t = DEFAULT_FOUNDING_ALLELES)]
     alleles: usize,
+    /// Probability that each Allele passed on at a Birth mutates (0.0 to 1.0).
+    #[arg(long, default_value_t = MutationSettings::default().rate())]
+    mutation_rate: f64,
+    /// Largest hue shift of a mutant from its source Allele, in degrees (0 to 180).
+    #[arg(long, default_value_t = MutationSettings::default().magnitude())]
+    mutation_magnitude: f64,
     /// Number of Generations to run.
     #[arg(long, default_value_t = 100)]
     generations: u64,
@@ -34,6 +40,8 @@ struct Args {
 struct Stats {
     generation: u64,
     population: usize,
+    /// Alleles carried by at least one live Cell, shown or hidden.
+    living_alleles: usize,
     census: CensusJson,
 }
 
@@ -92,6 +100,10 @@ impl From<Census> for CensusJson {
 
 fn main() -> ExitCode {
     let args = Args::parse();
+    let mutation = match MutationSettings::new(args.mutation_rate, args.mutation_magnitude) {
+        Ok(mutation) => mutation,
+        Err(error) => return fail(error),
+    };
     let mut world = match World::soup_with_alleles(
         args.width,
         args.height,
@@ -100,21 +112,26 @@ fn main() -> ExitCode {
         args.alleles,
     ) {
         Ok(world) => world,
-        Err(error) => {
-            eprintln!("error: {error}");
-            return ExitCode::FAILURE;
-        }
+        Err(error) => return fail(error),
     };
     world.set_rule(args.rule);
+    world.set_mutation(mutation);
     world.run(args.generations);
+    let census = world.census();
     let stats = Stats {
         generation: world.generation(),
         population: world.population(),
-        census: world.census().into(),
+        living_alleles: census.alleles.len(),
+        census: census.into(),
     };
     println!(
         "{}",
         serde_json::to_string(&stats).expect("stats serialise")
     );
     ExitCode::SUCCESS
+}
+
+fn fail(error: impl std::fmt::Display) -> ExitCode {
+    eprintln!("error: {error}");
+    ExitCode::FAILURE
 }
