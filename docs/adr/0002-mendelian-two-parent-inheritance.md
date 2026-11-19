@@ -1,0 +1,3 @@
+# Mendelian two-Parent inheritance
+
+Every live Cell carries a diploid Genotype, and at a Birth two Parents are chosen at random from the live Neighbours, each passing on one random Allele per Gene; when fewer than two Parents exist (B0/B1 Rules), the missing Alleles are drawn from the Allele Pool. We rejected the obvious alternatives (copy the majority color of the neighbours, or blend parent colors) because majority-copying cannot hide traits and blending converges to grey; Mendelian inheritance lets traits hide in Carriers and reappear generations later, which is the point of the project. Birth and Survival still follow the Rule exactly, so genetics never changes which Cells live.
