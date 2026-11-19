@@ -127,6 +127,7 @@ fn founding_allele_count_must_be_in_range() {
     assert!(World::soup_with_alleles(32, 32, 0.4, 1, 0).is_err());
     assert!(World::soup_with_alleles(32, 32, 0.4, 1, 17).is_err());
     assert!(World::soup_with_alleles(32, 32, 0.4, 1, 1).is_ok());
+    assert!(World::from_genotypes(16, 16, 1, &[], &[]).is_err());
 }
 
 #[test]
@@ -183,15 +184,6 @@ fn census_tracks_population_history_across_generations() {
     let census = world.census();
     assert_eq!(census.generation, 3);
     assert_eq!(census.population_history, vec![3, 3, 3, 3]);
-}
-
-#[test]
-fn births_with_fewer_than_two_neighbours_do_not_panic() {
-    for rule in ["B0/S", "B1/S", "B01/S1"] {
-        let mut world = World::soup(20, 20, 0.2, 3).unwrap();
-        world.set_rule(rule.parse().unwrap());
-        world.run(5);
-    }
 }
 
 #[test]

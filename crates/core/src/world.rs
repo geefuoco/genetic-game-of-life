@@ -5,6 +5,7 @@ use crate::genetics::{
 use crate::mutation::MutationSettings;
 use crate::rng::Rng;
 use crate::rule::Rule;
+use std::cell::OnceCell;
 use std::fmt;
 
 /// Smallest allowed World width or height.
@@ -146,9 +147,9 @@ impl World {
         Self::from_genotypes(width, height, seed, &[default], &genotyped)
     }
 
-    /// Creates a World with an explicit list of Alleles and exactly the given
-    /// `(x, y, first, second)` Cells live, where `first` and `second` index
-    /// into `alleles`.
+    /// Creates a World with an explicit, non-empty list of Founding Alleles
+    /// and exactly the given `(x, y, first, second)` Cells live, where
+    /// `first` and `second` index into `alleles`.
     pub fn from_genotypes(
         width: usize,
         height: usize,
@@ -157,7 +158,7 @@ impl World {
         live: &[(usize, usize, usize, usize)],
     ) -> Result<Self, WorldError> {
         check_size(width, height)?;
-        if alleles.len() > u32::MAX as usize {
+        if alleles.is_empty() || alleles.len() > u32::MAX as usize {
             return Err(WorldError::FoundingAllelesOutOfRange(alleles.len()));
         }
         for &allele in alleles {
@@ -208,32 +209,38 @@ impl World {
     /// Applies the Rule once to every Cell simultaneously, then prunes the
     /// Allele Tree.
     ///
-    /// A Birth with two or more live Neighbours draws, in order: the first
-    /// Parent, the second (distinct) Parent, the first Parent's Allele, the
-    /// second Parent's Allele, then the Mutation draws for the first and then
-    /// the second Allele passed on. Births with fewer Parents (B0 and B1
-    /// Rules) are unspecified: they draw nothing and copy the lone Parent, or
-    /// take the first Founding Allele twice when there is none.
+    /// A Birth draws its Parent and Allele choices, then any Allele Pool
+    /// draws, then the Mutation draws for the first and then the second Allele
+    /// passed on. With two or more live Neighbours the choices are the first
+    /// Parent, the second (distinct) Parent, the first Parent's Allele and the
+    /// second Parent's Allele, and there are no Allele Pool draws. With one
+    /// live Neighbour (B1 Rules) the lone Parent's Allele is chosen and is the
+    /// first Allele, and one Allele Pool draw gives the second. With none (B0
+    /// Rules) two Allele Pool draws give both.
+    ///
+    /// An Allele Pool draw picks a random live Cell as the World stood at the
+    /// start of the Generation, then one of its two Alleles, so Alleles are
+    /// weighted by copy count. In an empty World it picks a random Founding
+    /// Allele instead.
     ///
     /// Each Mutation draw decides whether the Allele mutates; a mutant then
     /// draws its hue shift and then its Dominance Level.
     pub fn step(&mut self) {
-        let mut next = vec![None; self.cells.len()];
+        let cells = std::mem::take(&mut self.cells);
+        let pool = AllelePool::new(&cells, self.tree.founding_count());
+        let mut next = vec![None; cells.len()];
         for y in 0..self.height {
             for x in 0..self.width {
-                let current = self.cells[y * self.width + x];
+                let current = cells[y * self.width + x];
                 let neighbours = self.neighbour_indices(x, y);
-                let count = neighbours
-                    .iter()
-                    .filter(|&&i| self.cells[i].is_some())
-                    .count();
+                let count = neighbours.iter().filter(|&&i| cells[i].is_some()).count();
                 if self.rule.next_state(current.is_some(), count) {
                     next[y * self.width + x] = Some(match current {
                         Some(genotype) => genotype,
                         None => {
                             let parents: Vec<Genotype> =
-                                neighbours.iter().filter_map(|&i| self.cells[i]).collect();
-                            self.birth(&parents)
+                                neighbours.iter().filter_map(|&i| cells[i]).collect();
+                            self.birth(&parents, &pool)
                         }
                     });
                 }
@@ -246,10 +253,13 @@ impl World {
             .prune(self.cells.iter().flatten().flatten().copied());
     }
 
-    fn birth(&mut self, parents: &[Genotype]) -> Genotype {
-        match parents {
-            [] => [Slot::FIRST_FOUNDING; 2],
-            [only] => *only,
+    fn birth(&mut self, parents: &[Genotype], pool: &AllelePool) -> Genotype {
+        let [first, second] = match parents {
+            [] => [pool.draw(&mut self.rng), pool.draw(&mut self.rng)],
+            [only] => {
+                let from_parent = only[pick(&mut self.rng, 2)];
+                [from_parent, pool.draw(&mut self.rng)]
+            }
             _ => {
                 let first = pick(&mut self.rng, parents.len());
                 let mut second = pick(&mut self.rng, parents.len() - 1);
@@ -258,9 +268,10 @@ impl World {
                 }
                 let from_first = parents[first][pick(&mut self.rng, 2)];
                 let from_second = parents[second][pick(&mut self.rng, 2)];
-                [self.pass_on(from_first), self.pass_on(from_second)]
+                [from_first, from_second]
             }
-        }
+        };
+        [self.pass_on(first), self.pass_on(second)]
     }
 
     /// The Allele in `slot` as it reaches the child: unchanged, or with
@@ -436,6 +447,40 @@ impl World {
             }
         }
         tally
+    }
+}
+
+/// The Allele Pool: the live Cells as the World stood at the start of a
+/// Generation, gathered on the first draw.
+struct AllelePool<'a> {
+    cells: &'a [Option<Genotype>],
+    founding_count: usize,
+    live: OnceCell<Vec<Genotype>>,
+}
+
+impl<'a> AllelePool<'a> {
+    /// The pool of `cells`, falling back to the first `founding_count`
+    /// slots, the Founding Alleles, when no Cell is live.
+    fn new(cells: &'a [Option<Genotype>], founding_count: usize) -> Self {
+        Self {
+            cells,
+            founding_count,
+            live: OnceCell::new(),
+        }
+    }
+
+    /// One Allele copy at random: a random live Cell, then one of its two
+    /// Alleles, so each Allele is weighted by its copy count. With no live
+    /// Cells, a random Founding Allele instead.
+    fn draw(&self, rng: &mut Rng) -> Slot {
+        let live = self
+            .live
+            .get_or_init(|| self.cells.iter().flatten().copied().collect());
+        if live.is_empty() {
+            return Slot::at(pick(rng, self.founding_count));
+        }
+        let genotype = live[pick(rng, live.len())];
+        genotype[pick(rng, 2)]
     }
 }
 
