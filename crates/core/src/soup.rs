@@ -8,7 +8,7 @@ use std::fmt;
 use std::str::FromStr;
 
 /// Share Link format version written by [`Soup::share_link`].
-const VERSION: &str = "1";
+const SHARE_LINK_VERSION: &str = "1";
 
 /// Share Link field names, in the order [`Soup::share_link`] writes them.
 const FIELDS: [&str; 9] = [
@@ -54,7 +54,7 @@ impl fmt::Display for ShareLinkError {
             }
             Self::UnsupportedVersion(version) => write!(
                 f,
-                "share link version '{version}' is not supported, this build reads version {VERSION}"
+                "share link version '{version}' is not supported, this build reads version {SHARE_LINK_VERSION}"
             ),
             Self::MissingField(field) => write!(f, "share link is missing the '{field}' field"),
             Self::DuplicateField(field) => {
@@ -66,8 +66,8 @@ impl fmt::Display for ShareLinkError {
                 "share link field '{field}' has value '{value}', which is not a valid number"
             ),
             Self::Rule(error) => write!(f, "share link rule is invalid: {error}"),
-            Self::Mutation(error) => write!(f, "share link settings are invalid: {error}"),
-            Self::World(error) => write!(f, "share link settings are invalid: {error}"),
+            Self::Mutation(error) => write!(f, "share link mutation settings are invalid: {error}"),
+            Self::World(error) => write!(f, "share link world settings are invalid: {error}"),
         }
     }
 }
@@ -110,7 +110,7 @@ impl Soup {
     /// that [`Soup::from_share_link`] reads back exactly the same values.
     pub fn share_link(&self) -> String {
         let values = [
-            VERSION.to_string(),
+            SHARE_LINK_VERSION.to_string(),
             self.seed.to_string(),
             self.rule.to_string(),
             self.width.to_string(),
@@ -146,7 +146,7 @@ impl Soup {
             .find(|(field, _)| *field == "v")
             .ok_or(ShareLinkError::MissingField("v"))?
             .1;
-        if version != VERSION {
+        if version != SHARE_LINK_VERSION {
             return Err(ShareLinkError::UnsupportedVersion(version.to_string()));
         }
         let mut values = HashMap::new();

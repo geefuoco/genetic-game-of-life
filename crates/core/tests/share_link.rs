@@ -55,67 +55,101 @@ fn a_soup_with_invalid_settings_has_no_world() {
 
 #[test]
 fn malformed_share_links_are_rejected_with_a_clear_error() {
+    use ShareLinkError as E;
+    type Expect = fn(&ShareLinkError) -> bool;
     let valid = soup().share_link();
-    let cases = [
-        ("empty", String::new()),
-        ("no version", valid.replace("v=1&", "")),
-        ("unknown version", valid.replace("v=1", "v=2")),
-        ("missing field", valid.replace("&alleles=4", "")),
-        ("unknown field", format!("{valid}&colour=red")),
-        ("duplicate field", format!("{valid}&seed=7")),
-        ("pair without '='", format!("{valid}&seed")),
+    let cases: [(&str, String, Expect); 18] = [
+        ("empty", String::new(), |e| matches!(e, E::MalformedPair(_))),
+        ("no version", valid.replace("v=1&", ""), |e| {
+            *e == E::MissingField("v")
+        }),
+        ("unknown version", valid.replace("v=1", "v=2"), |e| {
+            *e == E::UnsupportedVersion("2".into())
+        }),
+        ("missing field", valid.replace("&alleles=4", ""), |e| {
+            *e == E::MissingField("alleles")
+        }),
+        ("unknown field", format!("{valid}&colour=red"), |e| {
+            *e == E::UnknownField("colour".into())
+        }),
+        ("duplicate field", format!("{valid}&seed=7"), |e| {
+            *e == E::DuplicateField("seed".into())
+        }),
+        ("pair without '='", format!("{valid}&seed"), |e| {
+            *e == E::MalformedPair("seed".into())
+        }),
         (
             "seed not a number",
             valid.replace("seed=42", "seed=forty-two"),
+            |e| matches!(e, E::InvalidValue { field: "seed", .. }),
         ),
-        ("negative seed", valid.replace("seed=42", "seed=-1")),
-        ("width not a number", valid.replace("width=64", "width=6.4")),
+        ("negative seed", valid.replace("seed=42", "seed=-1"), |e| {
+            matches!(e, E::InvalidValue { field: "seed", .. })
+        }),
+        (
+            "width not a whole number",
+            valid.replace("width=64", "width=6.4"),
+            |e| matches!(e, E::InvalidValue { field: "width", .. }),
+        ),
         (
             "density not a number",
             valid.replace("density=0.3", "density=lots"),
+            |e| {
+                matches!(
+                    e,
+                    E::InvalidValue {
+                        field: "density",
+                        ..
+                    }
+                )
+            },
         ),
-        ("bad rule", valid.replace("B36/S23", "B9/S23")),
-        ("world too large", valid.replace("width=64", "width=2048")),
+        ("bad rule", valid.replace("B36/S23", "B9/S23"), |e| {
+            matches!(e, E::Rule(_))
+        }),
+        (
+            "world too large",
+            valid.replace("width=64", "width=2048"),
+            |e| matches!(e, E::World(_)),
+        ),
         (
             "density out of range",
             valid.replace("density=0.3", "density=1.5"),
+            |e| matches!(e, E::World(_)),
         ),
         (
             "density not finite",
             valid.replace("density=0.3", "density=NaN"),
+            |e| matches!(e, E::World(_)),
         ),
         (
             "too many founding alleles",
             valid.replace("alleles=4", "alleles=17"),
+            |e| matches!(e, E::World(_)),
         ),
         (
             "mutation rate out of range",
             valid.replace("mutation-rate=0.01", "mutation-rate=2"),
+            |e| matches!(e, E::Mutation(_)),
         ),
         (
             "mutation magnitude out of range",
             valid.replace("mutation-magnitude=30", "mutation-magnitude=181"),
+            |e| matches!(e, E::Mutation(_)),
         ),
     ];
-    for (case, link) in cases {
+    for (case, link, expected) in cases {
         let error = Soup::from_share_link(&link).expect_err(case);
+        assert!(expected(&error), "{case}: {error:?}");
         assert!(!error.to_string().is_empty(), "{case}");
     }
 }
 
 #[test]
-fn a_share_link_names_what_is_wrong() {
-    let valid = soup().share_link();
-    assert_eq!(
-        Soup::from_share_link(&valid.replace("v=1", "v=2")),
-        Err(ShareLinkError::UnsupportedVersion("2".into()))
-    );
-    assert_eq!(
-        Soup::from_share_link(&valid.replace("&alleles=4", "")),
-        Err(ShareLinkError::MissingField("alleles"))
-    );
-    let error = Soup::from_share_link(&valid.replace("seed=42", "seed=x")).unwrap_err();
-    assert!(error.to_string().contains("seed"), "{error}");
+fn a_share_link_error_names_the_bad_field() {
+    let link = soup().share_link().replace("seed=42", "seed=x");
+    let error = Soup::from_share_link(&link).unwrap_err();
+    assert!(error.to_string().contains("'seed'"), "{error}");
 }
 
 fn rule() -> impl Strategy<Value = Rule> {

@@ -32,8 +32,10 @@ fn payload(snapshot: &[u8]) -> Vec<u8> {
     miniz_oxide::inflate::decompress_to_vec_zlib(&snapshot[HEADER..]).unwrap()
 }
 
-fn reframe(snapshot: &[u8], payload: &[u8]) -> Vec<u8> {
-    let mut bytes = snapshot[..HEADER].to_vec();
+/// A version 1 Snapshot holding `payload`.
+fn sealed(payload: &[u8]) -> Vec<u8> {
+    let mut bytes = b"GGLS".to_vec();
+    bytes.extend(1u32.to_le_bytes());
     bytes.extend(miniz_oxide::deflate::compress_to_vec_zlib(payload, 6));
     bytes
 }
@@ -56,7 +58,6 @@ fn a_snapshot_starts_with_its_marker_and_format_version() {
     let bytes = soup(1).snapshot();
     assert_eq!(&bytes[..4], b"GGLS");
     assert_eq!(bytes[4..HEADER], 1u32.to_le_bytes());
-    assert_eq!(genetic_life_core::SNAPSHOT_VERSION, 1);
 }
 
 #[test]
@@ -73,7 +74,7 @@ fn an_unknown_prng_version_is_rejected() {
     let bytes = soup(2).snapshot();
     let mut payload = payload(&bytes);
     payload[RNG_VERSION_OFFSET..RNG_VERSION_OFFSET + 4].copy_from_slice(&99u32.to_le_bytes());
-    let error = World::from_snapshot(&reframe(&bytes, &payload)).unwrap_err();
+    let error = World::from_snapshot(&sealed(&payload)).unwrap_err();
     assert_eq!(error, SnapshotError::UnsupportedRng(99));
     assert!(error.to_string().contains("99"), "{error}");
 }
@@ -92,8 +93,16 @@ fn bytes_that_are_not_a_snapshot_are_rejected() {
 fn every_truncation_of_a_snapshot_is_rejected() {
     let bytes = soup(3).snapshot();
     for len in 0..bytes.len() {
-        let error = World::from_snapshot(&bytes[..len]).unwrap_err();
-        assert!(!error.to_string().is_empty());
+        let expected = if len < 4 {
+            SnapshotError::NotASnapshot
+        } else {
+            SnapshotError::Truncated
+        };
+        assert_eq!(
+            World::from_snapshot(&bytes[..len]),
+            Err(expected),
+            "length {len}"
+        );
     }
 }
 
@@ -104,7 +113,10 @@ fn a_corrupt_byte_in_the_compressed_payload_is_rejected() {
         let mut corrupt = bytes.clone();
         corrupt[i] ^= 0xFF;
         let error = World::from_snapshot(&corrupt).unwrap_err();
-        assert!(!error.to_string().is_empty(), "byte {i}");
+        assert!(
+            matches!(error, SnapshotError::Corrupt | SnapshotError::Truncated),
+            "byte {i}: {error:?}"
+        );
     }
 }
 
@@ -114,7 +126,7 @@ fn a_payload_with_trailing_bytes_is_rejected() {
     let mut payload = payload(&bytes);
     payload.push(0);
     assert_eq!(
-        World::from_snapshot(&reframe(&bytes, &payload)),
+        World::from_snapshot(&sealed(&payload)),
         Err(SnapshotError::TrailingBytes)
     );
 }
@@ -125,7 +137,7 @@ fn a_truncated_payload_is_rejected() {
     let payload = payload(&bytes);
     for len in 0..payload.len() {
         assert_eq!(
-            World::from_snapshot(&reframe(&bytes, &payload[..len])),
+            World::from_snapshot(&sealed(&payload[..len])),
             Err(SnapshotError::Truncated),
             "payload length {len}"
         );
@@ -220,10 +232,7 @@ impl Payload {
         for population in &self.history {
             p.extend(population.to_le_bytes());
         }
-        let mut bytes = b"GGLS".to_vec();
-        bytes.extend(1u32.to_le_bytes());
-        bytes.extend(miniz_oxide::deflate::compress_to_vec_zlib(&p, 6));
-        bytes
+        sealed(&p)
     }
 }
 
@@ -305,7 +314,10 @@ fn a_payload_describing_no_valid_world_is_rejected() {
 fn a_live_cell_listed_twice_is_rejected() {
     let mut payload = Payload::valid();
     payload.cells = vec![(17, 0, 1), (17, 0, 1)];
-    assert!(World::from_snapshot(&payload.snapshot()).is_err());
+    assert!(matches!(
+        World::from_snapshot(&payload.snapshot()),
+        Err(SnapshotError::Invalid(_))
+    ));
 }
 
 proptest! {
@@ -340,7 +352,7 @@ proptest! {
         prop_assert_eq!(imported, world);
     }
 
-    /// Damaged payload bytes behind a valid frame must never panic: import
+    /// Damaged payload bytes behind a valid header must never panic: import
     /// either fails or yields a World that runs normally.
     #[test]
     fn a_damaged_payload_never_panics(
@@ -356,7 +368,7 @@ proptest! {
             let i = index.index(payload.len());
             payload[i] = value;
         }
-        if let Ok(mut imported) = World::from_snapshot(&reframe(&bytes, &payload)) {
+        if let Ok(mut imported) = World::from_snapshot(&sealed(&payload)) {
             let tree = imported.allele_tree();
             for node in &tree {
                 imported.lineage(node.id);

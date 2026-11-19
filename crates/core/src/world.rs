@@ -252,10 +252,10 @@ impl World {
         let population = reader.index()?;
         reader.expect_items(population as u64, 12)?;
         let mut cells = vec![None; width * height];
-        let mut first_free = 0;
+        let mut lowest_allowed = 0;
         for _ in 0..population {
             let index = reader.index()?;
-            if index < first_free || index >= cells.len() {
+            if index < lowest_allowed || index >= cells.len() {
                 return Err(invalid(format!(
                     "live cell index {index} is out of order or outside the world"
                 )));
@@ -267,7 +267,7 @@ impl World {
                 )));
             }
             cells[index] = Some(genotype.map(Slot::at));
-            first_free = index + 1;
+            lowest_allowed = index + 1;
         }
         reader.expect_items(generation, 4)?;
         let population_history = (0..=generation)
