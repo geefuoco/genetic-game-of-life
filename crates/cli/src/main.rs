@@ -1,5 +1,5 @@
 use clap::Parser;
-use genetic_life_core::World;
+use genetic_life_core::{Rule, World};
 use serde::Serialize;
 use std::process::ExitCode;
 
@@ -18,6 +18,10 @@ struct Args {
     /// Probability that a Cell starts live (0.0 to 1.0).
     #[arg(long, default_value_t = 0.3)]
     density: f64,
+    /// Rule as B/S notation (e.g. B36/S23) or a Preset: conway, highlife,
+    /// day-and-night, seeds, gnarl, life-without-death.
+    #[arg(long, default_value = "conway", value_parser = Rule::resolve)]
+    rule: Rule,
     /// Number of Generations to run.
     #[arg(long, default_value_t = 100)]
     generations: u64,
@@ -38,6 +42,7 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    world.set_rule(args.rule);
     world.run(args.generations);
     let stats = Stats {
         generation: world.generation(),
