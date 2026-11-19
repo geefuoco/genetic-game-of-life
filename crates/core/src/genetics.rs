@@ -20,6 +20,14 @@ pub struct Allele {
     pub dominance: u8,
 }
 
+impl Allele {
+    /// Whether the hue is in `0.0..360.0` and the Dominance Level at most
+    /// [`MAX_DOMINANCE`].
+    pub(crate) fn is_valid(&self) -> bool {
+        (0.0..360.0).contains(&self.hue) && self.dominance <= MAX_DOMINANCE
+    }
+}
+
 /// The pair of Alleles a live Cell carries.
 pub(crate) type Genotype = [Slot; 2];
 

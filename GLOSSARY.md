@@ -116,6 +116,10 @@ _Avoid_: Random fill, noise
 A named, known arrangement of live Cells (e.g. glider, Gosper gun) that can be stamped into the World.
 _Avoid_: Shape, prefab, template
 
+**Share Link**:
+Text encoding the Rule, settings and Seed of a Soup World, from which anyone can start the same run.
+_Avoid_: Permalink, share code
+
 **Snapshot**:
 A complete, exportable record of a World's state at one Generation, sufficient to resume the run exactly.
 _Avoid_: Save, dump, state file
