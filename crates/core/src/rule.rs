@@ -36,7 +36,7 @@ impl fmt::Display for RuleError {
             Self::DuplicateCount(c) => write!(f, "neighbour count {c} is listed twice"),
             Self::UnknownPreset(name) => write!(
                 f,
-                "'{name}' is neither a Rule Preset ({}) nor B/S notation",
+                "'{name}' is neither a Rule Preset ({}) nor B/S notation like B3/S23",
                 Rule::PRESETS.map(|(name, _)| name).join(", ")
             ),
         }
@@ -97,8 +97,8 @@ impl Rule {
         Ok(Self { birth, survival })
     }
 
-    /// Looks up a Rule Preset by name, ignoring case; `&`, spaces and `_` act
-    /// as word breaks, so "Day & Night" finds `day-and-night`.
+    /// Looks up a Rule Preset by name, ignoring case; `&` reads as "and" and
+    /// any non-alphanumeric character is a word break, so "Day & Night" finds `day-and-night`.
     pub fn preset(name: &str) -> Option<Self> {
         let slug = name
             .to_lowercase()
@@ -118,7 +118,7 @@ impl Rule {
         if let Some(rule) = Self::preset(input) {
             return Ok(rule);
         }
-        if input.contains('/') || input.is_empty() {
+        if input.contains('/') {
             return Self::parse(input);
         }
         Err(RuleError::UnknownPreset(input.to_string()))

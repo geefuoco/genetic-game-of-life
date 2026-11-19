@@ -18,7 +18,7 @@ struct Args {
     /// Probability that a Cell starts live (0.0 to 1.0).
     #[arg(long, default_value_t = 0.3)]
     density: f64,
-    /// Rule as B/S notation (e.g. B36/S23) or a Preset: conway, highlife,
+    /// Rule as B/S notation (e.g. B36/S23) or a Rule Preset: conway, highlife,
     /// day-and-night, seeds, gnarl, life-without-death.
     #[arg(long, default_value = "conway", value_parser = Rule::resolve)]
     rule: Rule,
