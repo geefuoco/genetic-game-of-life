@@ -1,0 +1,20 @@
+[package]
+name = "genetic-life-cli"
+description = "Command line runner for the genetic life core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "genetic-life"
+path = "src/main.rs"
+
+[dependencies]
+genetic-life-core = { path = "../core" }
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[lints]
+workspace = true
