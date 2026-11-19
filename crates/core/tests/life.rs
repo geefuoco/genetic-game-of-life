@@ -98,3 +98,18 @@ mod determinism {
         }
     }
 }
+
+#[test]
+fn rng_version_1_sequence_is_pinned() {
+    let mut rng = genetic_life_core::Rng::new(0);
+    assert_eq!(genetic_life_core::Rng::VERSION, 1);
+    assert_eq!(rng.next_u64(), 0xE220_A839_7B1D_CDAF);
+    assert_eq!(rng.next_u64(), 0x6E78_9E6A_A1B9_65F4);
+}
+
+#[test]
+fn different_seeds_give_different_soups() {
+    let a = World::soup(32, 32, 0.5, 1).unwrap();
+    let b = World::soup(32, 32, 0.5, 2).unwrap();
+    assert_ne!(a.live_cells(), b.live_cells());
+}
