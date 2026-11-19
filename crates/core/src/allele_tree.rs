@@ -5,9 +5,6 @@ use crate::genetics::Allele;
 pub(crate) struct Slot(u32);
 
 impl Slot {
-    /// Slot of the first Founding Allele.
-    pub(crate) const FIRST_FOUNDING: Self = Self(0);
-
     pub(crate) fn index(self) -> usize {
         self.0 as usize
     }
@@ -74,6 +71,7 @@ struct Entry {
 pub(crate) struct AlleleTree {
     entries: Vec<Entry>,
     free: Vec<Slot>,
+    founding: usize,
 }
 
 impl AlleleTree {
@@ -92,7 +90,19 @@ impl AlleleTree {
                 })
                 .collect(),
             free: vec![],
+            founding: alleles.len(),
         }
+    }
+
+    /// The `i`th Founding Allele, for `i` in `0..founding_count()`.
+    pub(crate) fn founding(&self, i: usize) -> Slot {
+        assert!(i < self.founding, "Founding Allele {i} out of range");
+        Slot::at(i)
+    }
+
+    /// Number of Founding Alleles.
+    pub(crate) fn founding_count(&self) -> usize {
+        self.founding
     }
 
     /// One more than the highest slot index in use.

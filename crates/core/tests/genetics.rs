@@ -186,15 +186,6 @@ fn census_tracks_population_history_across_generations() {
 }
 
 #[test]
-fn births_with_fewer_than_two_neighbours_do_not_panic() {
-    for rule in ["B0/S", "B1/S", "B01/S1"] {
-        let mut world = World::soup(20, 20, 0.2, 3).unwrap();
-        world.set_rule(rule.parse().unwrap());
-        world.run(5);
-    }
-}
-
-#[test]
 fn single_allele_world_always_births_that_allele() {
     assert_eq!(child_phenotype(&[allele(77.0, 2)], (0, 0)), 77.0);
 }

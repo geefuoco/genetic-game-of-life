@@ -208,16 +208,24 @@ impl World {
     /// Applies the Rule once to every Cell simultaneously, then prunes the
     /// Allele Tree.
     ///
-    /// A Birth with two or more live Neighbours draws, in order: the first
-    /// Parent, the second (distinct) Parent, the first Parent's Allele, the
-    /// second Parent's Allele, then the Mutation draws for the first and then
-    /// the second Allele passed on. Births with fewer Parents (B0 and B1
-    /// Rules) are unspecified: they draw nothing and copy the lone Parent, or
-    /// take the first Founding Allele twice when there is none.
+    /// A Birth draws its Parent and Allele choices, then any Allele Pool
+    /// draws, then the Mutation draws for the first and then the second Allele
+    /// passed on. With two or more live Neighbours the choices are the first
+    /// Parent, the second (distinct) Parent, the first Parent's Allele and the
+    /// second Parent's Allele, and there are no Allele Pool draws. With one
+    /// live Neighbour (B1 Rules) the lone Parent's Allele is chosen and is the
+    /// first Allele, and one Allele Pool draw gives the second. With none (B0
+    /// Rules) two Allele Pool draws give both.
+    ///
+    /// An Allele Pool draw picks a random live Cell as the World stood at the
+    /// start of the Generation, then one of its two Alleles, so Alleles are
+    /// weighted by copy count. In an empty World it picks a random Founding
+    /// Allele instead.
     ///
     /// Each Mutation draw decides whether the Allele mutates; a mutant then
     /// draws its hue shift and then its Dominance Level.
     pub fn step(&mut self) {
+        let mut pool = AllelePool::default();
         let mut next = vec![None; self.cells.len()];
         for y in 0..self.height {
             for x in 0..self.width {
@@ -233,7 +241,7 @@ impl World {
                         None => {
                             let parents: Vec<Genotype> =
                                 neighbours.iter().filter_map(|&i| self.cells[i]).collect();
-                            self.birth(&parents)
+                            self.birth(&parents, &mut pool)
                         }
                     });
                 }
@@ -246,10 +254,18 @@ impl World {
             .prune(self.cells.iter().flatten().flatten().copied());
     }
 
-    fn birth(&mut self, parents: &[Genotype]) -> Genotype {
+    fn birth(&mut self, parents: &[Genotype], pool: &mut AllelePool) -> Genotype {
         match parents {
-            [] => [Slot::FIRST_FOUNDING; 2],
-            [only] => *only,
+            [] => {
+                let first = pool.draw(&self.cells, &self.tree, &mut self.rng);
+                let second = pool.draw(&self.cells, &self.tree, &mut self.rng);
+                [self.pass_on(first), self.pass_on(second)]
+            }
+            [only] => {
+                let from_parent = only[pick(&mut self.rng, 2)];
+                let from_pool = pool.draw(&self.cells, &self.tree, &mut self.rng);
+                [self.pass_on(from_parent), self.pass_on(from_pool)]
+            }
             _ => {
                 let first = pick(&mut self.rng, parents.len());
                 let mut second = pick(&mut self.rng, parents.len() - 1);
@@ -436,6 +452,29 @@ impl World {
             }
         }
         tally
+    }
+}
+
+/// The Allele Pool as it stood at the start of a Generation, gathered on its
+/// first draw.
+#[derive(Default)]
+struct AllelePool {
+    live: Option<Vec<Genotype>>,
+}
+
+impl AllelePool {
+    /// One Allele copy at random: a random live Cell of `cells`, then one of
+    /// its two Alleles, so each Allele is weighted by its copy count. With no
+    /// live Cells, a random Founding Allele of `tree` instead.
+    fn draw(&mut self, cells: &[Option<Genotype>], tree: &AlleleTree, rng: &mut Rng) -> Slot {
+        let live = self
+            .live
+            .get_or_insert_with(|| cells.iter().flatten().copied().collect());
+        if live.is_empty() {
+            return tree.founding(pick(rng, tree.founding_count()));
+        }
+        let genotype = live[pick(rng, live.len())];
+        genotype[pick(rng, 2)]
     }
 }
 
