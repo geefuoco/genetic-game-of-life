@@ -18,7 +18,7 @@ pub struct Allele {
     pub dominance: u8,
 }
 
-/// Index of an Allele in a World's Allele table.
+/// Index of an Allele in a World's list of Alleles.
 pub(crate) type AlleleId = u16;
 
 /// The pair of Alleles a live Cell carries.
@@ -28,11 +28,11 @@ pub(crate) type Genotype = [AlleleId; 2];
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AlleleCensus {
     pub allele: Allele,
-    /// Copies carried by live Cells; each Organism carries two.
+    /// Copies carried by live Cells; each live Cell carries two.
     pub copies: usize,
-    /// Organisms whose Phenotype shows this Allele (a blend shows both).
+    /// live Cells whose Phenotype shows this Allele (a blend shows both).
     pub shown: usize,
-    /// Organisms carrying this Allele that the Phenotype does not show.
+    /// live Cells carrying this Allele that the Phenotype does not show.
     pub hidden: usize,
 }
 
@@ -43,13 +43,13 @@ pub struct Census {
     pub generation: u64,
     /// Every living Allele, in Founding order.
     pub alleles: Vec<AlleleCensus>,
-    /// Living Alleles that no Organism shows.
+    /// Living Alleles that no live Cell shows.
     pub fully_hidden: Vec<Allele>,
     /// Population at Generations `0..=generation`.
     pub population_history: Vec<usize>,
 }
 
-fn wrap(hue: f64) -> f64 {
+pub(crate) fn wrap(hue: f64) -> f64 {
     if hue < 0.0 {
         hue + 360.0
     } else if hue >= 360.0 {
@@ -59,7 +59,7 @@ fn wrap(hue: f64) -> f64 {
     }
 }
 
-/// Hue of an Organism carrying `a` and `b`.
+/// Hue of a live Cell carrying `a` and `b`.
 pub(crate) fn phenotype(a: Allele, b: Allele) -> f64 {
     if a.hue == b.hue {
         return a.hue;

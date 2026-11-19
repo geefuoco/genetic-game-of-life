@@ -1,4 +1,4 @@
-use genetic_life_core::{Allele, Rule, World, DEAD_PHENOTYPE};
+use genetic_life_core::{Allele, Rule, World, DEAD_PHENOTYPE, MAX_DOMINANCE};
 use proptest::prelude::*;
 
 fn allele(hue: f64, dominance: u8) -> Allele {
@@ -28,7 +28,7 @@ fn phenotype_of(a: Allele, b: Allele) -> f64 {
 }
 
 #[test]
-fn homozygous_organism_shows_its_hue() {
+fn homozygous_cell_shows_its_hue() {
     assert_eq!(phenotype_of(allele(100.0, 1), allele(100.0, 1)), 100.0);
 }
 
@@ -38,11 +38,11 @@ fn higher_dominance_level_masks_the_other_allele() {
     assert_eq!(phenotype_of(allele(10.0, 0), allele(200.0, 3)), 200.0);
 }
 
+/// Includes a blend across the 0/360 seam: 350 and 30 meet at 10.
 #[test]
 fn equal_dominance_blends_along_the_shorter_arc_in_both_directions() {
     assert_eq!(phenotype_of(allele(10.0, 1), allele(70.0, 1)), 40.0);
     assert_eq!(phenotype_of(allele(70.0, 1), allele(10.0, 1)), 40.0);
-    // Across the 0/360 seam: 350 and 30 meet at 10.
     assert_eq!(phenotype_of(allele(350.0, 2), allele(30.0, 2)), 10.0);
     assert_eq!(phenotype_of(allele(30.0, 2), allele(350.0, 2)), 10.0);
 }
@@ -62,21 +62,31 @@ fn phenotype_buffer_has_one_value_per_cell_and_marks_dead_cells() {
     assert_eq!(buffer.iter().filter(|&&v| v == DEAD_PHENOTYPE).count(), 255);
 }
 
+/// Blends are only ever displayed: after many Generations of crosses, the
+/// Alleles still alive are exactly Founding Alleles, so no blend was inherited.
 #[test]
-fn blended_organism_passes_on_original_alleles_not_the_blend() {
-    // Equal Dominance, hues 0 and 120 blend to 60. Children of blends are
-    // never 60 unless they are blends themselves; over many Births every
-    // child must be one of the three phenotypes the original Alleles allow.
-    let alleles = [allele(0.0, 1), allele(120.0, 1)];
-    let allowed = [0.0, 60.0, 120.0];
+fn blended_cells_pass_on_original_alleles_never_the_blend() {
+    for seed in 0..20 {
+        let mut world = World::soup_with_alleles(32, 32, 0.4, seed, 3).unwrap();
+        let founding = world.alleles().to_vec();
+        world.run(40);
+        let census = world.census();
+        assert!(census.alleles.iter().all(|a| founding.contains(&a.allele)));
+    }
+}
+
+/// Three Parents each homozygous for a different Allele: a child of two
+/// distinct Parents is never homozygous, which fails if one Parent is picked twice.
+#[test]
+fn a_birth_never_takes_both_alleles_from_the_same_parent() {
+    let alleles = [allele(0.0, 0), allele(100.0, 0), allele(200.0, 0)];
     for seed in 0..200 {
-        let live: Vec<_> = [(4, 4), (5, 4), (4, 5)]
-            .iter()
-            .map(|&(x, y)| (x, y, 0, 1))
-            .collect();
+        let live = [(4, 4, 0, 0), (5, 4, 1, 1), (4, 5, 2, 2)];
         let mut world = World::from_genotypes(16, 16, seed, &alleles, &live).unwrap();
         world.step();
-        assert!(allowed.contains(&world.phenotypes()[5 * 16 + 5]));
+        let child = world.phenotypes()[5 * 16 + 5];
+        let hues = alleles.map(|a| a.hue);
+        assert!(!hues.contains(&child), "seed {seed}: homozygous child");
     }
 }
 
@@ -91,7 +101,7 @@ fn founding_alleles_are_evenly_spaced_and_deterministic_from_the_seed() {
         let gap = if gap <= 0.0 { gap + 360.0 } else { gap };
         assert!((gap - 90.0).abs() < 1e-9, "gap {gap}");
     }
-    assert!(a.alleles().iter().all(|a| a.dominance <= 3));
+    assert!(a.alleles().iter().all(|a| a.dominance <= MAX_DOMINANCE));
     let c = World::soup_with_alleles(32, 32, 0.4, 100, 4).unwrap();
     assert_ne!(a.alleles(), c.alleles());
 }
@@ -113,9 +123,9 @@ fn same_seed_gives_identical_genetic_runs() {
     assert_eq!(run(), run());
 }
 
+/// Allele 0 dominates 1; Allele 2 is carried by nobody so is not reported.
 #[test]
 fn census_reports_copies_shown_hidden_and_fully_hidden_alleles() {
-    // 0 is dominant over 1. One carrier (0,1), one homozygote (0,0), one (1,1).
     let alleles = [allele(0.0, 3), allele(120.0, 0), allele(240.0, 0)];
     let world = World::from_genotypes(
         16,
@@ -129,7 +139,6 @@ fn census_reports_copies_shown_hidden_and_fully_hidden_alleles() {
     assert_eq!(census.population, 3);
     assert_eq!(census.generation, 0);
     assert_eq!(census.population_history, vec![3]);
-    // Allele 2 is not carried by anyone, so it is not reported.
     assert_eq!(census.alleles.len(), 2);
     let dominant = census.alleles[0];
     assert_eq!(
@@ -176,7 +185,7 @@ fn single_allele_world_always_births_that_allele() {
 
 proptest! {
     #[test]
-    fn census_counts_exactly_two_allele_copies_per_organism(
+    fn census_counts_exactly_two_allele_copies_per_live_cell(
         seed in any::<u64>(), alleles in 1usize..=16, generations in 0u64..20,
     ) {
         let mut world = World::soup_with_alleles(24, 24, 0.4, seed, alleles).unwrap();
@@ -196,7 +205,6 @@ proptest! {
         let rule: Rule = "B36/S23".parse().unwrap();
         let mut genetic = World::soup_with_alleles(24, 24, 0.4, seed, alleles).unwrap();
         genetic.set_rule(rule);
-        // Rule-only reference: the same live Cells, none of the genetics.
         let mut reference = World::from_cells(24, 24, seed, &genetic.live_cells()).unwrap();
         reference.set_rule(rule);
         genetic.run(generations);

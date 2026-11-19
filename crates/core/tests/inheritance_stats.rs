@@ -7,7 +7,7 @@ use genetic_life_core::{Allele, World, DEAD_PHENOTYPE};
 const SIZE: usize = 200;
 
 /// A deterministic scatter of live Cells (about 30%), every one typed
-/// `genotype`, with a few runs of the World at several Seeds.
+/// `genotype`.
 fn uniform_world(alleles: &[Allele], genotype: (usize, usize), seed: u64) -> World {
     let mut state = seed ^ 0x1234_5678_9ABC_DEF0;
     let mut live = vec![];

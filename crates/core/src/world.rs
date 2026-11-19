@@ -1,5 +1,5 @@
 use crate::genetics::{
-    phenotype, shows, Allele, AlleleCensus, AlleleId, Census, Genotype, DEAD_PHENOTYPE,
+    phenotype, shows, wrap, Allele, AlleleCensus, AlleleId, Census, Genotype, DEAD_PHENOTYPE,
     MAX_DOMINANCE,
 };
 use crate::rng::Rng;
@@ -28,7 +28,7 @@ pub enum WorldError {
     FoundingAllelesOutOfRange(usize),
     /// An Allele's hue is outside `0.0..360.0` or its Dominance Level is too high.
     InvalidAllele(Allele),
-    /// A Cell refers to an Allele that is not in the Allele table.
+    /// A Cell refers to an Allele index beyond the World's Alleles.
     UnknownAllele(usize),
 }
 
@@ -52,7 +52,7 @@ impl fmt::Display for WorldError {
                 "allele hue {} must be in 0..360 and dominance {} at most {MAX_DOMINANCE}",
                 a.hue, a.dominance
             ),
-            Self::UnknownAllele(id) => write!(f, "allele {id} is not in the allele table"),
+            Self::UnknownAllele(id) => write!(f, "allele {id} is not one of the World's Alleles"),
         }
     }
 }
@@ -69,7 +69,7 @@ pub struct World {
     height: usize,
     cells: Vec<Option<Genotype>>,
     alleles: Vec<Allele>,
-    history: Vec<usize>,
+    population_history: Vec<usize>,
     generation: u64,
     rule: Rule,
     rng: Rng,
@@ -110,7 +110,7 @@ impl World {
             .map(|i| {
                 let hue = offset + i as f64 * spacing;
                 Allele {
-                    hue: if hue >= 360.0 { hue - 360.0 } else { hue },
+                    hue: wrap(hue),
                     dominance: (rng.next_f64() * (MAX_DOMINANCE + 1) as f64) as u8,
                 }
             })
@@ -144,7 +144,7 @@ impl World {
         Self::from_genotypes(width, height, seed, &[default], &genotyped)
     }
 
-    /// Creates a World with an explicit Allele table and exactly the given
+    /// Creates a World with an explicit list of Alleles and exactly the given
     /// `(x, y, first, second)` Cells live, where `first` and `second` index
     /// into `alleles`.
     pub fn from_genotypes(
@@ -156,7 +156,7 @@ impl World {
     ) -> Result<Self, WorldError> {
         check_size(width, height)?;
         if alleles.len() > AlleleId::MAX as usize {
-            return Err(WorldError::UnknownAllele(alleles.len()));
+            return Err(WorldError::FoundingAllelesOutOfRange(alleles.len()));
         }
         for &allele in alleles {
             if !(0.0..360.0).contains(&allele.hue) || allele.dominance > MAX_DOMINANCE {
@@ -195,7 +195,7 @@ impl World {
             height,
             cells,
             alleles,
-            history: vec![population],
+            population_history: vec![population],
             generation: 0,
             rule: Rule::default(),
             rng,
@@ -225,7 +225,7 @@ impl World {
         }
         self.cells = next;
         self.generation += 1;
-        self.history.push(self.population());
+        self.population_history.push(self.population());
     }
 
     fn birth(&mut self, parents: &[Genotype]) -> Genotype {
@@ -318,7 +318,7 @@ impl World {
         (found, count)
     }
 
-    /// The Allele table, indexed by the ids used in Genotypes.
+    /// The World's Alleles, indexed by the ids used in Genotypes.
     pub fn alleles(&self) -> &[Allele] {
         &self.alleles
     }
@@ -340,17 +340,18 @@ impl World {
         let mut counts = vec![(0, 0, 0); self.alleles.len()];
         for &[a, b] in self.cells.iter().flatten() {
             let (shows_a, shows_b) = shows(self.alleles[a as usize], self.alleles[b as usize]);
+            counts[a as usize].0 += 1;
+            counts[b as usize].0 += 1;
+            if a == b {
+                counts[a as usize].1 += 1;
+                continue;
+            }
             for (id, shown) in [(a, shows_a), (b, shows_b)] {
-                counts[id as usize].0 += 1;
                 if shown {
                     counts[id as usize].1 += 1;
                 } else {
                     counts[id as usize].2 += 1;
                 }
-            }
-            if a == b {
-                // A homozygote is one Organism showing the Allele, not two.
-                counts[a as usize].1 -= 1;
             }
         }
         let alleles: Vec<AlleleCensus> = self
@@ -374,7 +375,7 @@ impl World {
                 .map(|a| a.allele)
                 .collect(),
             alleles,
-            population_history: self.history.clone(),
+            population_history: self.population_history.clone(),
         }
     }
 }
