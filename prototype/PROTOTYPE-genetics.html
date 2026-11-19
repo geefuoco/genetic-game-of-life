@@ -1,0 +1,763 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Genetic Life Prototype</title>
+<style>
+:root {
+  --bg: #0f1115;
+  --panel: #171a21;
+  --line: #262b36;
+  --text: #e6e8ee;
+  --muted: #8b93a7;
+  --accent: #7aa2ff;
+  --void: #0b0c10;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, -apple-system, Segoe UI, sans-serif; }
+header { padding: 20px 24px 8px; max-width: 1400px; margin: 0 auto; }
+h1 { font-size: 20px; margin: 0 0 4px; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
+.badge { display: inline-block; font-size: 11px; padding: 2px 8px; border: 1px solid var(--accent); color: var(--accent); border-radius: 999px; margin-left: 8px; vertical-align: middle; }
+.intro { color: var(--muted); max-width: 900px; margin: 0; }
+main { display: grid; grid-template-columns: minmax(0, 1fr) 420px; gap: 16px; padding: 16px 24px 32px; max-width: 1400px; margin: 0 auto; }
+@media (max-width: 1000px) { main { grid-template-columns: 1fr; padding: 16px; } header { padding: 16px; } }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+.stack { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+#view { width: 100%; max-width: 768px; aspect-ratio: 1; image-rendering: pixelated; background: var(--void); border-radius: 8px; display: block; margin: 0 auto; cursor: crosshair; touch-action: none; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+.row:last-child { margin-bottom: 0; }
+label { color: var(--muted); font-size: 12px; display: inline-flex; align-items: center; gap: 6px; }
+button, select, input[type=text], input[type=number] { background: #1f2430; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font: inherit; font-size: 13px; }
+input[type=number] { width: 70px; }
+input[type=text] { width: 110px; }
+button { cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); color: #0b1020; border-color: var(--accent); font-weight: 600; }
+button.on { border-color: var(--accent); color: var(--accent); }
+.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; }
+.stat { display: flex; justify-content: space-between; border-bottom: 1px dashed var(--line); padding: 2px 0; }
+.stat span:first-child { color: var(--muted); }
+.stat span:last-child { font-variant-numeric: tabular-nums; }
+.changed { color: var(--accent); }
+.swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; border: 1px solid rgba(255,255,255,.15); }
+table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+th { text-align: left; color: var(--muted); font-weight: 500; padding: 4px; border-bottom: 1px solid var(--line); }
+td { padding: 4px; border-bottom: 1px solid var(--line); }
+tr.allele { cursor: pointer; }
+tr.allele:hover td { background: #1d2230; }
+tr.allele.sel td { background: #22304d; }
+.tag { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: #262b36; color: var(--muted); }
+.tag.hidden { background: #3a2f12; color: #f3c969; }
+.tablewrap { max-height: 320px; overflow: auto; }
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.scenario p { color: var(--muted); margin: 0 0 10px; }
+.steps { display: flex; flex-direction: column; gap: 6px; }
+.step { display: flex; gap: 10px; align-items: flex-start; }
+.step button { min-width: 230px; text-align: left; }
+.step .note { color: var(--muted); font-size: 12px; padding-top: 6px; }
+.step.done button { opacity: .55; }
+.step.next button { border-color: var(--accent); }
+.mini { width: 100%; height: 60px; display: block; background: var(--void); border-radius: 6px; }
+.inspector .line { margin: 4px 0; }
+.lineage { color: var(--muted); font-size: 12px; }
+.muted { color: var(--muted); }
+#lastAction { color: var(--accent); font-size: 12px; min-height: 18px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Genetic Game of Life <span class="badge">PROTOTYPE, throwaway</span></h1>
+  <p class="intro">Question this answers: <strong>does the Mendelian genetics model look and feel right on top of Conway's Life?</strong> Every live Organism carries two Pigment Alleles. The stronger Allele decides its color, and equal ones blend. At each Birth, two random live Neighbours are the Parents, and each passes on one of its two Alleles at random. Births and deaths follow the Rule exactly, so genetics never changes who lives, only what they carry. Try the guided scenarios below, or play freely.</p>
+</header>
+
+<main>
+  <div class="stack">
+    <div class="panel">
+      <canvas id="view" width="768" height="768"></canvas>
+      <div id="lastAction"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Free play</h2>
+      <div class="row">
+        <button id="play" class="primary">Play</button>
+        <button id="step">Step 1 Generation</button>
+        <button id="step10">Step 10</button>
+        <label>Speed <input id="speed" type="range" min="1" max="240" value="20"> <span id="speedOut">20</span>/s</label>
+      </div>
+      <div class="row">
+        <label>Rule
+          <select id="preset">
+            <option value="B3/S23">Conway's Life (B3/S23)</option>
+            <option value="B36/S23">HighLife (B36/S23)</option>
+            <option value="B3678/S34678">Day &amp; Night (B3678/S34678)</option>
+            <option value="B2/S">Seeds (B2/S)</option>
+            <option value="B1/S1">Gnarl (B1/S1)</option>
+            <option value="B3/S012345678">Life without Death</option>
+          </select>
+        </label>
+        <input id="ruleText" type="text" value="B3/S23" aria-label="Custom rule">
+        <button id="applyRule">Apply Rule</button>
+      </div>
+      <div class="row">
+        <label>World <select id="size"><option>128</option><option selected>256</option><option>512</option></select></label>
+        <label>Founding Alleles <input id="founders" type="number" min="1" max="8" value="4"></label>
+        <label>Density <input id="density" type="number" min="1" max="100" value="35">%</label>
+        <label>Seed <input id="seed" type="number" value="42"></label>
+        <button id="newSoup">New Soup</button>
+        <button id="clear">Empty World</button>
+      </div>
+      <div class="row">
+        <label>Mutation rate <input id="mutRate" type="range" min="0" max="100" value="0"> <span id="mutRateOut">0.0</span>% per Allele passed on</label>
+      </div>
+      <div class="row">
+        <label>Mutation magnitude <input id="mutMag" type="range" min="0" max="90" value="12"> <span id="mutMagOut">12</span>° hue</label>
+      </div>
+      <div class="row">
+        <label>Tool</label>
+        <button class="tool on" data-tool="inspect">Inspect</button>
+        <button class="tool" data-tool="paint">Paint</button>
+        <button class="tool" data-tool="erase">Erase</button>
+        <label>Brush size <input id="brushSize" type="number" min="1" max="12" value="3"></label>
+      </div>
+      <div class="row">
+        <label>Brush Allele hue <input id="brushHue" type="range" min="0" max="359" value="25"> <span id="brushSwatch" class="swatch"></span></label>
+        <label>Dominance <input id="brushDom" type="number" min="0" max="3" value="2"></label>
+        <label><input id="hetero" type="checkbox"> Paint Carriers, with a second Allele:</label>
+        <label>hue <input id="brushHue2" type="range" min="0" max="359" value="250"> <span id="brushSwatch2" class="swatch"></span></label>
+        <label>Dominance <input id="brushDom2" type="number" min="0" max="3" value="0"></label>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Guided scenarios</h2>
+      <div class="tabs" id="tabs"></div>
+      <div class="scenario" id="scenario"><p>Pick a scenario. Choosing one resets the World to a known starting state, so it plays out the same way every time.</p></div>
+    </div>
+  </div>
+
+  <div class="stack">
+    <div class="panel">
+      <h2>World state</h2>
+      <div class="stats" id="stats"></div>
+    </div>
+    <div class="panel">
+      <h2>Phenotypes (visible colors)</h2>
+      <canvas id="hist" class="mini" width="360" height="60"></canvas>
+      <h2 style="margin-top:12px">Population over time</h2>
+      <canvas id="spark" class="mini" width="360" height="60"></canvas>
+    </div>
+    <div class="panel inspector">
+      <h2>Inspector</h2>
+      <div id="inspector" class="muted">With the Inspect tool, click a Cell to see its Genotype.</div>
+    </div>
+    <div class="panel">
+      <h2>Living Alleles</h2>
+      <p class="muted" style="margin:0 0 8px;font-size:12px">Click an Allele to highlight its Carriers. Bright: the Organism shows the Allele. White: the Allele is hidden in that Organism.</p>
+      <div class="tablewrap"><table id="alleles"></table></div>
+    </div>
+  </div>
+</main>
+
+<script id="genetics-model">
+const Genetics = (() => {
+  function rand(world) {
+    let t = (world.rngState = (world.rngState + 0x6d2b79f5) | 0);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+
+  function wrapHue(h) {
+    return ((h % 360) + 360) % 360;
+  }
+
+  function parseRule(text) {
+    const m = /^\s*B([0-8]*)\s*\/\s*S([0-8]*)\s*$/i.exec(text);
+    if (!m) return null;
+    const birth = new Array(9).fill(false);
+    const survive = new Array(9).fill(false);
+    for (const c of m[1]) birth[+c] = true;
+    for (const c of m[2]) survive[+c] = true;
+    return { birth, survive, text: `B${[...new Set(m[1])].sort().join('')}/S${[...new Set(m[2])].sort().join('')}` };
+  }
+
+  function create({ size, seed, rule, mutationRate = 0, mutationMagnitude = 12 }) {
+    const n = size * size;
+    return {
+      width: size, height: size, generation: 0, rngState: seed | 0,
+      rule: parseRule(rule), mutationRate, mutationMagnitude,
+      alive: new Uint8Array(n), a1: new Int32Array(n), a2: new Int32Array(n),
+      nextAlive: new Uint8Array(n), nextA1: new Int32Array(n), nextA2: new Int32Array(n),
+      alleles: { hue: [], dom: [], parent: [], born: [], name: [] },
+      founders: [], lastBirths: 0, lastSurprises: 0, lastMutations: 0, totalSurprises: 0,
+      populationHistory: [],
+    };
+  }
+
+  function addAllele(world, hue, dom, parent, name) {
+    const A = world.alleles;
+    A.hue.push(wrapHue(hue)); A.dom.push(dom); A.parent.push(parent);
+    A.born.push(world.generation); A.name.push(name);
+    return A.hue.length - 1;
+  }
+
+  function addFounder(world, { name, hue, dominance }) {
+    const id = addAllele(world, hue, dominance, -1, name);
+    world.founders.push(id);
+    return id;
+  }
+
+  function phenotype(world, a, b) {
+    const { hue, dom } = world.alleles;
+    if (a === b) return { hue: hue[a], showA: true, showB: true };
+    if (dom[a] > dom[b]) return { hue: hue[a], showA: true, showB: false };
+    if (dom[b] > dom[a]) return { hue: hue[b], showA: false, showB: true };
+    const ha = hue[a], hb = hue[b];
+    let d = wrapHue(hb - ha);
+    let mid;
+    if (d === 180) mid = wrapHue(Math.min(ha, hb) + 90);
+    else if (d < 180) mid = wrapHue(ha + d / 2);
+    else mid = wrapHue(ha - (360 - d) / 2);
+    return { hue: mid, showA: true, showB: true };
+  }
+
+  function setCell(world, i, a, b) { world.alive[i] = 1; world.a1[i] = a; world.a2[i] = b; }
+  function clearCell(world, i) { world.alive[i] = 0; }
+  function clearAll(world) { world.alive.fill(0); }
+
+  function pairsFrom(ids) {
+    const pairs = [];
+    for (const a of ids) for (const b of ids) pairs.push([a, b]);
+    return pairs;
+  }
+
+  function soup(world, { density, pairs, x0 = 0, y0 = 0, x1 = world.width, y1 = world.height }) {
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
+      if (rand(world) < density) {
+        const [a, b] = pairs[Math.floor(rand(world) * pairs.length)];
+        setCell(world, y * world.width + x, a, b);
+      }
+    }
+  }
+
+  function step(world) {
+    const { width: w, height: h, alive, a1, a2, nextAlive, nextA1, nextA2, rule, alleles } = world;
+    const live = [];
+    for (let i = 0; i < alive.length; i++) if (alive[i]) live.push(i);
+    if (world.founders.length === 0) addFounder(world, { name: 'Founder', hue: 200, dominance: 1 });
+    let mutated = false;
+    const pass = (p) => (rand(world) < 0.5 ? a1[p] : a2[p]);
+    const draw = () => live.length > 0
+      ? pass(live[Math.floor(rand(world) * live.length)])
+      : world.founders[Math.floor(rand(world) * world.founders.length)];
+    const mutate = (id) => {
+      if (world.mutationRate > 0 && rand(world) < world.mutationRate) {
+        mutated = true;
+        world.lastMutations++;
+        const hue = alleles.hue[id] + (rand(world) * 2 - 1) * world.mutationMagnitude;
+        return addAllele(world, hue, Math.floor(rand(world) * 4), id, null);
+      }
+      return id;
+    };
+    const nb = new Int32Array(8);
+    let births = 0, surprises = 0;
+    world.lastMutations = 0;
+    for (let y = 0; y < h; y++) {
+      const ym = ((y - 1 + h) % h) * w, y0 = y * w, yp = ((y + 1) % h) * w;
+      for (let x = 0; x < w; x++) {
+        const xm = (x - 1 + w) % w, xp = (x + 1) % w;
+        let n = 0;
+        const around = [ym + xm, ym + x, ym + xp, y0 + xm, y0 + xp, yp + xm, yp + x, yp + xp];
+        for (let k = 0; k < 8; k++) if (alive[around[k]]) nb[n++] = around[k];
+        const i = y0 + x;
+        if (alive[i]) {
+          if (rule.survive[n]) { nextAlive[i] = 1; nextA1[i] = a1[i]; nextA2[i] = a2[i]; }
+          else nextAlive[i] = 0;
+        } else if (rule.birth[n]) {
+          mutated = false;
+          let ca, cb, p1 = -1, p2 = -1;
+          if (n >= 2) {
+            const i1 = Math.floor(rand(world) * n);
+            let i2 = Math.floor(rand(world) * (n - 1));
+            if (i2 >= i1) i2++;
+            p1 = nb[i1]; p2 = nb[i2];
+            ca = pass(p1); cb = pass(p2);
+          } else if (n === 1) {
+            p1 = nb[0];
+            ca = pass(p1); cb = draw();
+          } else {
+            ca = draw(); cb = draw();
+          }
+          ca = mutate(ca); cb = mutate(cb);
+          nextAlive[i] = 1; nextA1[i] = ca; nextA2[i] = cb;
+          births++;
+          if (p2 >= 0 && !mutated) {
+            const c = phenotype(world, ca, cb).hue;
+            const h1 = phenotype(world, a1[p1], a2[p1]).hue;
+            const h2 = phenotype(world, a1[p2], a2[p2]).hue;
+            if (c !== h1 && c !== h2) surprises++;
+          }
+        } else nextAlive[i] = 0;
+      }
+    }
+    world.alive = nextAlive; world.nextAlive = alive;
+    world.a1 = nextA1; world.nextA1 = a1;
+    world.a2 = nextA2; world.nextA2 = a2;
+    world.generation++;
+    world.lastBirths = births; world.lastSurprises = surprises; world.totalSurprises += surprises;
+    let pop = 0;
+    for (let i = 0; i < world.alive.length; i++) pop += world.alive[i];
+    world.populationHistory.push(pop);
+    if (world.populationHistory.length > 400) world.populationHistory.shift();
+  }
+
+  function census(world) {
+    const count = world.alleles.hue.length;
+    const copies = new Int32Array(count), showing = new Int32Array(count), hiding = new Int32Array(count);
+    const bins = new Array(36).fill(0);
+    let population = 0;
+    const { alive, a1, a2 } = world;
+    for (let i = 0; i < alive.length; i++) {
+      if (!alive[i]) continue;
+      population++;
+      const a = a1[i], b = a2[i];
+      const p = phenotype(world, a, b);
+      bins[Math.floor(p.hue / 10) % 36]++;
+      copies[a]++; copies[b]++;
+      if (a === b) { showing[a]++; continue; }
+      if (p.showA) showing[a]++; else hiding[a]++;
+      if (p.showB) showing[b]++; else hiding[b]++;
+    }
+    const living = [];
+    for (let id = 0; id < count; id++) if (copies[id] > 0) living.push({ id, copies: copies[id], showing: showing[id], hiding: hiding[id] });
+    living.sort((x, y) => y.copies - x.copies);
+    return { population, living, bins, hidden: living.filter((l) => l.showing === 0).length };
+  }
+
+  function lineage(world, id) {
+    const chain = [];
+    for (let cur = id; cur >= 0; cur = world.alleles.parent[cur]) chain.push(cur);
+    return chain;
+  }
+
+  function oklchToRgb(L, C, hDeg) {
+    const h = (hDeg * Math.PI) / 180;
+    const a = C * Math.cos(h), b = C * Math.sin(h);
+    const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+    const m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+    const s = (L - 0.0894841775 * a - 1.291485548 * b) ** 3;
+    const lin = [
+      4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+      -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+      -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
+    ];
+    return lin.map((v) => {
+      const c = v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(Math.max(v, 0), 1 / 2.4) - 0.055;
+      return Math.round(Math.min(1, Math.max(0, c)) * 255);
+    });
+  }
+
+  return { parseRule, create, addFounder, phenotype, setCell, clearCell, clearAll, pairsFrom, soup, step, census, lineage, oklchToRgb };
+})();
+</script>
+
+<script id="page-shell">
+const view = document.getElementById('view');
+const vctx = view.getContext('2d');
+const off = document.createElement('canvas');
+const octx = off.getContext('2d');
+let world, image, pixels;
+let running = false, pending = 0, gps = 20, acc = 0, lastT = 0, lastPanel = 0, dirty = false;
+let tool = 'inspect', selectedCell = -1, highlight = -1, brushAlleles = new Map();
+let prevStats = {};
+let activeScenario = -1, scenarioStep = 0;
+
+const COLOR = new Uint32Array(3600);
+for (let i = 0; i < 3600; i++) {
+  const [r, g, b] = Genetics.oklchToRgb(0.74, 0.16, i / 10);
+  COLOR[i] = (255 << 24) | (b << 16) | (g << 8) | r;
+}
+const VOID = (255 << 24) | (0x10 << 16) | (0x0c << 8) | 0x0b;
+const DIM = (255 << 24) | (0x2a << 16) | (0x26 << 8) | 0x24;
+const WHITE = 0xffffffff;
+const hueColor = (h) => COLOR[Math.floor(h * 10) % 3600];
+const css = (h) => { const [r, g, b] = Genetics.oklchToRgb(0.74, 0.16, h); return `rgb(${r},${g},${b})`; };
+const swatch = (h) => `<span class="swatch" style="background:${css(h)}"></span>`;
+
+function setWorld(w) {
+  world = w;
+  off.width = w.width; off.height = w.height;
+  image = octx.createImageData(w.width, w.height);
+  pixels = new Uint32Array(image.data.buffer);
+  selectedCell = -1; highlight = -1; brushAlleles = new Map(); pending = 0; prevStats = {};
+  document.getElementById('ruleText').value = w.rule.text;
+  if ([...document.getElementById('size').options].some((o) => o.value === String(w.width))) document.getElementById('size').value = String(w.width);
+  document.getElementById('mutRate').value = Math.round(w.mutationRate * 1000);
+  document.getElementById('mutMag').value = w.mutationMagnitude;
+  document.getElementById('mutRateOut').textContent = (w.mutationRate * 100).toFixed(1);
+  document.getElementById('mutMagOut').textContent = w.mutationMagnitude;
+  draw(); updatePanels(true);
+}
+
+function readMutation() {
+  return { rate: +document.getElementById('mutRate').value / 1000, mag: +document.getElementById('mutMag').value };
+}
+
+function newSoup() {
+  const size = +document.getElementById('size').value;
+  const seed = +document.getElementById('seed').value;
+  const n = Math.max(1, Math.min(8, +document.getElementById('founders').value));
+  const density = +document.getElementById('density').value / 100;
+  const m = readMutation();
+  const w = Genetics.create({ size, seed, rule: document.getElementById('ruleText').value || 'B3/S23', mutationRate: m.rate, mutationMagnitude: m.mag });
+  if (!w.rule) w.rule = Genetics.parseRule('B3/S23');
+  const ids = [];
+  for (let k = 0; k < n; k++) {
+    ids.push(Genetics.addFounder(w, { name: `Founder ${k + 1}`, hue: 25 + (k * 360) / n, dominance: [3, 1, 0, 2, 1, 3, 0, 2][k] }));
+  }
+  Genetics.soup(w, { density, pairs: Genetics.pairsFrom(ids) });
+  setWorld(w);
+  say(`New soup: ${n} Founding Alleles, every Organism gets a random pair of them.`);
+}
+
+function draw() {
+  const { alive, a1, a2 } = world;
+  for (let i = 0; i < alive.length; i++) {
+    if (!alive[i]) { pixels[i] = VOID; continue; }
+    const a = a1[i], b = a2[i];
+    const p = Genetics.phenotype(world, a, b);
+    if (highlight >= 0) {
+      if (a === highlight || b === highlight) {
+        const shows = (a === highlight && p.showA) || (b === highlight && p.showB);
+        pixels[i] = shows ? hueColor(p.hue) : WHITE;
+      } else pixels[i] = DIM;
+    } else pixels[i] = hueColor(p.hue);
+  }
+  octx.putImageData(image, 0, 0);
+  vctx.imageSmoothingEnabled = false;
+  vctx.drawImage(off, 0, 0, view.width, view.height);
+  if (selectedCell >= 0) {
+    const s = view.width / world.width;
+    const x = selectedCell % world.width, y = Math.floor(selectedCell / world.width);
+    vctx.strokeStyle = '#7aa2ff'; vctx.lineWidth = 2;
+    vctx.strokeRect(x * s - 3, y * s - 3, s + 6, s + 6);
+  }
+}
+
+function alleleLabel(id) {
+  const A = world.alleles;
+  const name = A.name[id] ? `${A.name[id]} ` : '';
+  return `${swatch(A.hue[id])} ${name}#${id}`;
+}
+
+function stat(key, label, value) {
+  const changed = prevStats[key] !== undefined && prevStats[key] !== value;
+  prevStats[key] = value;
+  return `<div class="stat"><span>${label}</span><span class="${changed ? 'changed' : ''}">${value}</span></div>`;
+}
+
+function updatePanels() {
+  const c = Genetics.census(world);
+  const surprisePct = world.lastBirths ? ((100 * world.lastSurprises) / world.lastBirths).toFixed(1) + '%' : 'n/a';
+  document.getElementById('stats').innerHTML = [
+    stat('gen', 'Generation', world.generation),
+    stat('pop', 'Population', c.population),
+    stat('births', 'Births last Generation', world.lastBirths),
+    stat('surp', 'Surprise births', `${world.lastSurprises} (${surprisePct})`),
+    stat('living', 'Living Alleles', c.living.length),
+    stat('hidden', 'Hidden Alleles', c.hidden),
+    stat('rule', 'Rule', world.rule.text),
+    stat('mut', 'Mutation', `${(world.mutationRate * 100).toFixed(1)}% / ±${world.mutationMagnitude}°`),
+  ].join('') + `<div class="stat" style="grid-column:1/-1"><span>Surprise birth = a newborn whose color matches neither Parent (no Mutation involved). Total so far</span><span>${world.totalSurprises}</span></div>`;
+
+  const rows = c.living.slice(0, 60).map((l) => {
+    const status = l.showing === 0 ? '<span class="tag hidden">hidden</span>' : '<span class="tag">visible</span>';
+    const pct = ((100 * l.copies) / (2 * c.population)).toFixed(1);
+    return `<tr class="allele ${l.id === highlight ? 'sel' : ''}" data-id="${l.id}"><td>${alleleLabel(l.id)}</td><td>${world.alleles.dom[l.id]}</td><td>${l.copies} (${pct}%)</td><td>${l.showing}</td><td>${l.hiding}</td><td>${status}</td></tr>`;
+  }).join('');
+  document.getElementById('alleles').innerHTML = `<tr><th>Allele</th><th>Dom.</th><th>Copies</th><th>Shows in</th><th>Hidden in</th><th></th></tr>${rows}` +
+    (c.living.length > 60 ? `<tr><td colspan="6" class="muted">and ${c.living.length - 60} more</td></tr>` : '');
+
+  const hc = document.getElementById('hist').getContext('2d');
+  hc.clearRect(0, 0, 360, 60);
+  const max = Math.max(1, ...c.bins);
+  c.bins.forEach((v, k) => { hc.fillStyle = css(k * 10 + 5); const hh = (v / max) * 56; hc.fillRect(k * 10 + 1, 60 - hh, 8, hh); });
+
+  const sc = document.getElementById('spark').getContext('2d');
+  sc.clearRect(0, 0, 360, 60);
+  const hist = world.populationHistory;
+  if (hist.length > 1) {
+    const pm = Math.max(...hist, 1);
+    sc.strokeStyle = '#7aa2ff'; sc.lineWidth = 1.5; sc.beginPath();
+    hist.forEach((v, k) => { const x = (k / (hist.length - 1)) * 360, y = 58 - (v / pm) * 54; k ? sc.lineTo(x, y) : sc.moveTo(x, y); });
+    sc.stroke();
+  }
+  renderInspector();
+}
+
+function renderInspector() {
+  const el = document.getElementById('inspector');
+  if (selectedCell < 0) { el.innerHTML = 'With the Inspect tool, click a Cell to see its Genotype.'; el.className = 'muted'; return; }
+  el.className = '';
+  const x = selectedCell % world.width, y = Math.floor(selectedCell / world.width);
+  if (!world.alive[selectedCell]) { el.innerHTML = `<div class="line">Cell (${x}, ${y}) is <strong>empty</strong>. The inspector follows the Cell, not the Organism, in this prototype.</div>`; return; }
+  const a = world.a1[selectedCell], b = world.a2[selectedCell];
+  const p = Genetics.phenotype(world, a, b);
+  const A = world.alleles;
+  const line = (id, shown) => {
+    const chain = Genetics.lineage(world, id).map((cid) => alleleLabel(cid)).join(' ← ');
+    return `<div class="line">${alleleLabel(id)}, Dominance ${A.dom[id]}, <strong>${shown ? 'shown' : 'hidden'}</strong><div class="lineage">Descends from: ${chain} (Founding Allele)</div></div>`;
+  };
+  let kind;
+  if (a === b) kind = 'Two copies of the same Allele';
+  else if (p.showA && p.showB) kind = 'Incomplete Dominance: the two Alleles blend';
+  else kind = 'Carrier: one Allele is hidden';
+  el.innerHTML = `<div class="line">Cell (${x}, ${y}): Phenotype ${swatch(p.hue)} hue ${p.hue.toFixed(1)}°</div><div class="line muted">${kind}</div>${line(a, p.showA)}${a === b ? '' : line(b, p.showB)}`;
+}
+
+function say(text) { document.getElementById('lastAction').textContent = text; }
+
+function loop(t) {
+  const dt = Math.min(0.1, (t - lastT) / 1000); lastT = t;
+  let stepped = 0;
+  if (pending > 0) {
+    const n = Math.min(pending, 12);
+    for (let k = 0; k < n; k++) Genetics.step(world);
+    pending -= n; stepped += n;
+  } else if (running) {
+    acc += dt * gps;
+    const n = Math.min(Math.floor(acc), 12);
+    acc -= Math.floor(acc);
+    for (let k = 0; k < n; k++) Genetics.step(world);
+    stepped += n;
+  }
+  if (stepped) { draw(); dirty = true; }
+  if (dirty && (t - lastPanel > 250 || !stepped)) { updatePanels(); lastPanel = t; dirty = false; }
+  requestAnimationFrame(loop);
+}
+
+function stepNow(n) { for (let k = 0; k < n; k++) Genetics.step(world); draw(); updatePanels(); }
+function runFor(n) { pending += n; say(`Running ${n} Generations...`); }
+
+function setRunning(r) { running = r; document.getElementById('play').textContent = r ? 'Pause' : 'Play'; }
+
+document.getElementById('play').onclick = () => setRunning(!running);
+document.getElementById('step').onclick = () => { stepNow(1); say('Advanced 1 Generation.'); };
+document.getElementById('step10').onclick = () => { stepNow(10); say('Advanced 10 Generations.'); };
+document.getElementById('speed').oninput = (e) => { gps = +e.target.value; document.getElementById('speedOut').textContent = gps; };
+document.getElementById('preset').onchange = (e) => { document.getElementById('ruleText').value = e.target.value; applyRule(); };
+document.getElementById('applyRule').onclick = applyRule;
+function applyRule() {
+  const r = Genetics.parseRule(document.getElementById('ruleText').value);
+  if (!r) { say('That Rule is not valid B/S notation, e.g. B3/S23.'); return; }
+  world.rule = r; updatePanels(); say(`Rule is now ${r.text}.`);
+}
+document.getElementById('newSoup').onclick = newSoup;
+document.getElementById('size').onchange = newSoup;
+document.getElementById('clear').onclick = () => { Genetics.clearAll(world); draw(); updatePanels(); say('World emptied.'); };
+const syncMut = () => {
+  const m = readMutation();
+  document.getElementById('mutRateOut').textContent = (m.rate * 100).toFixed(1);
+  document.getElementById('mutMagOut').textContent = m.mag;
+  if (world) { world.mutationRate = m.rate; world.mutationMagnitude = m.mag; updatePanels(); }
+};
+document.getElementById('mutRate').oninput = syncMut;
+document.getElementById('mutMag').oninput = syncMut;
+document.querySelectorAll('.tool').forEach((b) => b.onclick = () => {
+  tool = b.dataset.tool;
+  document.querySelectorAll('.tool').forEach((x) => x.classList.toggle('on', x === b));
+});
+const syncBrush = () => {
+  document.getElementById('brushSwatch').style.background = css(+document.getElementById('brushHue').value);
+  document.getElementById('brushSwatch2').style.background = css(+document.getElementById('brushHue2').value);
+};
+['brushHue', 'brushHue2'].forEach((id) => document.getElementById(id).oninput = syncBrush);
+syncBrush();
+
+function brushAllele(hue, dom) {
+  const key = `${hue}|${dom}`;
+  if (!brushAlleles.has(key)) brushAlleles.set(key, Genetics.addFounder(world, { name: 'Painted', hue, dominance: dom }));
+  return brushAlleles.get(key);
+}
+
+function cellAt(ev) {
+  const r = view.getBoundingClientRect();
+  const x = Math.floor(((ev.clientX - r.left) / r.width) * world.width);
+  const y = Math.floor(((ev.clientY - r.top) / r.height) * world.height);
+  if (x < 0 || y < 0 || x >= world.width || y >= world.height) return -1;
+  return y * world.width + x;
+}
+
+function applyBrush(i) {
+  const size = +document.getElementById('brushSize').value;
+  const cx = i % world.width, cy = Math.floor(i / world.width);
+  const clamp = (v) => Math.max(0, Math.min(3, Math.round(v)));
+  const a = tool === 'paint' ? brushAllele(+document.getElementById('brushHue').value, clamp(+document.getElementById('brushDom').value)) : -1;
+  const b = tool === 'paint' && document.getElementById('hetero').checked ? brushAllele(+document.getElementById('brushHue2').value, clamp(+document.getElementById('brushDom2').value)) : a;
+  const r = size - 1;
+  for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+    const x = (cx + dx + world.width) % world.width, y = (cy + dy + world.height) % world.height;
+    const j = y * world.width + x;
+    if (tool === 'paint') Genetics.setCell(world, j, a, b); else Genetics.clearCell(world, j);
+  }
+  draw();
+}
+
+let painting = false;
+view.addEventListener('pointerdown', (ev) => {
+  const i = cellAt(ev); if (i < 0) return;
+  if (tool === 'inspect') { selectedCell = i; draw(); renderInspector(); return; }
+  painting = true; view.setPointerCapture(ev.pointerId); applyBrush(i);
+});
+view.addEventListener('pointermove', (ev) => { if (!painting) return; const i = cellAt(ev); if (i >= 0) applyBrush(i); });
+view.addEventListener('pointerup', () => { if (painting) { painting = false; updatePanels(); } });
+
+document.getElementById('alleles').addEventListener('click', (ev) => {
+  const tr = ev.target.closest('tr.allele'); if (!tr) return;
+  const id = +tr.dataset.id;
+  highlight = highlight === id ? -1 : id;
+  draw(); updatePanels();
+  say(highlight >= 0 ? `Highlighting Carriers of Allele #${id}. White means the Allele is there but hidden.` : 'Highlight cleared.');
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  if (e.code === 'Space') { e.preventDefault(); setRunning(!running); }
+  if (e.key === '.') stepNow(1);
+});
+
+function scenarioWorld({ rule = 'B3/S23', mutationRate = 0, mutationMagnitude = 12, seed = 7 }) {
+  setRunning(false);
+  return Genetics.create({ size: 192, seed, rule, mutationRate, mutationMagnitude });
+}
+const highlightFounder = (name) => { highlight = world.alleles.name.indexOf(name); draw(); updatePanels(); };
+
+const SCENARIOS = [
+  {
+    title: 'Hidden recessive',
+    text: 'Every Organism starts as a red Carrier of a hidden blue Allele: red is dominant (3), blue is recessive (0). The whole World looks red. When two Carriers are Parents, each passes on blue half the time, so about 1 in 4 newborns should come out blue, like the blue-eyed baby with two dark-haired parents. Watch "Surprise births".',
+    setup() {
+      const w = scenarioWorld({});
+      const red = Genetics.addFounder(w, { name: 'Red', hue: 25, dominance: 3 });
+      const blue = Genetics.addFounder(w, { name: 'Blue', hue: 250, dominance: 0 });
+      Genetics.soup(w, { density: 0.35, pairs: [[red, blue]] });
+      setWorld(w);
+    },
+    steps: [
+      ['Advance 1 Generation', 'Blue babies appear. Surprise births should be close to 25% of births.', () => stepNow(1)],
+      ['Highlight everyone carrying Blue', 'White = carrying Blue but hiding it. Bright blue = showing it.', () => highlightFounder('Blue')],
+      ['Run 150 Generations', 'Does Blue stay hidden in most Carriers, or does it surface over time?', () => runFor(150)],
+      ['Clear the highlight', 'Back to the plain colors.', () => { highlight = -1; draw(); updatePanels(); }],
+    ],
+  },
+  {
+    title: 'Blending',
+    text: 'Red and Yellow have the same Dominance Level (1), so a Red/Yellow Organism shows a blend: orange. The World starts as a mix of pure red and pure yellow Organisms. When a red and a yellow Organism are the two Parents, the child is orange. Because each orange Organism still carries both Alleles intact, two orange Parents can have red, orange or yellow children (1:2:1). Colors do not wash out into one muddy average.',
+    setup() {
+      const w = scenarioWorld({ seed: 11 });
+      const red = Genetics.addFounder(w, { name: 'Red', hue: 25, dominance: 1 });
+      const yellow = Genetics.addFounder(w, { name: 'Yellow', hue: 110, dominance: 1 });
+      Genetics.soup(w, { density: 0.35, pairs: [[red, red], [yellow, yellow]] });
+      setWorld(w);
+    },
+    steps: [
+      ['Advance 1 Generation', 'Orange newborns appear wherever a red and a yellow Organism were the Parents.', () => stepNow(1)],
+      ['Run 40 Generations', 'Orange Parents now have red, orange and yellow children.', () => runFor(40)],
+      ['Highlight Red', 'Red is shown (bright) inside every orange Organism too, because blending shows both Alleles.', () => highlightFounder('Red')],
+      ['Clear the highlight and run 300 Generations', 'Watch the phenotype histogram: three peaks (red, orange, yellow), not one grey average.', () => { highlight = -1; runFor(300); }],
+    ],
+  },
+  {
+    title: 'Dominance ladder',
+    text: 'Four Founding Alleles with Dominance Levels 3, 2, 1 and 0, randomly paired. The most dominant colors take over what you see, but the recessive ones survive hidden. Compare "Copies" with "Shows in" in the Living Alleles table.',
+    setup() {
+      const w = scenarioWorld({ seed: 3 });
+      const ids = [
+        Genetics.addFounder(w, { name: 'Crimson', hue: 15, dominance: 3 }),
+        Genetics.addFounder(w, { name: 'Lime', hue: 130, dominance: 2 }),
+        Genetics.addFounder(w, { name: 'Azure', hue: 235, dominance: 1 }),
+        Genetics.addFounder(w, { name: 'Violet', hue: 310, dominance: 0 }),
+      ];
+      Genetics.soup(w, { density: 0.35, pairs: Genetics.pairsFrom(ids) });
+      setWorld(w);
+    },
+    steps: [
+      ['Run 100 Generations', 'Crimson dominates the colors. Is Violet still around?', () => runFor(100)],
+      ['Highlight Violet (most recessive)', 'Mostly white: Violet survives almost entirely hidden.', () => highlightFounder('Violet')],
+      ['Run 500 more Generations', 'Allele frequencies drift, but nothing is selected for. Colors never decide who lives.', () => runFor(500)],
+    ],
+  },
+  {
+    title: 'Mutation drift',
+    text: 'One Founding Allele and a 2% Mutation rate (±15° hue). Each Mutation creates a new Allele with a nearby hue and a random Dominance Level. Related lineages should look alike, and new dominant mutants can take over a region. Click any Cell (Inspect tool) to see the chain of Alleles it descends from.',
+    setup() {
+      const w = scenarioWorld({ mutationRate: 0.02, mutationMagnitude: 15, seed: 5 });
+      const sky = Genetics.addFounder(w, { name: 'Sky', hue: 210, dominance: 1 });
+      Genetics.soup(w, { density: 0.35, pairs: [[sky, sky]] });
+      setWorld(w);
+    },
+    steps: [
+      ['Run 200 Generations', 'Shades of blue spread as mutants appear.', () => runFor(200)],
+      ['Run 1000 more Generations', 'Does the World become a patchwork of related hues, or noise?', () => runFor(1000)],
+    ],
+  },
+  {
+    title: 'Missing Parents',
+    text: 'Gnarl (B1/S1): a Cell is born with exactly 1 live Neighbour, so there is only one Parent. The other Allele is drawn from the Allele Pool, the whole living population. A single red Organism grows in the middle while a blue patch lives in a corner, so the red growth should start carrying Blue it never inherited from a Parent.',
+    setup() {
+      const w = scenarioWorld({ rule: 'B1/S1', seed: 9 });
+      const red = Genetics.addFounder(w, { name: 'Red', hue: 25, dominance: 2 });
+      const blue = Genetics.addFounder(w, { name: 'Blue', hue: 250, dominance: 1 });
+      Genetics.setCell(w, 96 * 192 + 96, red, red);
+      Genetics.soup(w, { density: 0.5, pairs: [[blue, blue]], x0: 4, y0: 4, x1: 24, y1: 24 });
+      setWorld(w);
+    },
+    steps: [
+      ['Advance 1 Generation', 'Look at the Living Alleles table.', () => stepNow(1)],
+      ['Run 30 Generations', 'The red growth spreads.', () => runFor(30)],
+      ['Highlight Blue', 'White Organisms inside the red growth carry Blue from the Allele Pool, not from a Parent.', () => highlightFounder('Blue')],
+    ],
+  },
+];
+
+function renderScenario() {
+  const tabs = document.getElementById('tabs');
+  tabs.innerHTML = SCENARIOS.map((s, k) => `<button class="${k === activeScenario ? 'on' : ''}" data-k="${k}">${k + 1}. ${s.title}</button>`).join('');
+  const box = document.getElementById('scenario');
+  if (activeScenario < 0) return;
+  const s = SCENARIOS[activeScenario];
+  box.innerHTML = `<p>${s.text}</p><div class="steps">${s.steps.map(([label, note], k) =>
+    `<div class="step ${k < scenarioStep ? 'done' : k === scenarioStep ? 'next' : ''}"><button data-step="${k}">${k + 1}. ${label}</button><div class="note">${note}</div></div>`).join('')}
+    <div class="step"><button data-reset="1">Start this scenario over</button></div></div>`;
+}
+
+document.getElementById('tabs').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  startScenario(+b.dataset.k);
+});
+function startScenario(k) {
+  activeScenario = k; scenarioStep = 0;
+  SCENARIOS[k].setup();
+  say(`Scenario "${SCENARIOS[k].title}" set up. Nothing is running yet.`);
+  renderScenario();
+}
+document.getElementById('scenario').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.reset) { startScenario(activeScenario); return; }
+  const k = +b.dataset.step;
+  const [label, , run] = SCENARIOS[activeScenario].steps[k];
+  run();
+  if (!label.startsWith('Run')) say(label + '.');
+  scenarioStep = Math.max(scenarioStep, k + 1);
+  renderScenario();
+});
+
+renderScenario();
+newSoup();
+requestAnimationFrame((t) => { lastT = t; requestAnimationFrame(loop); });
+</script>
+</body>
+</html>

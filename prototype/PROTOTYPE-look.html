@@ -1,0 +1,771 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Genetic Life Looks</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,500;1,9..144,300&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+* { box-sizing: border-box; margin: 0; }
+html, body { height: 100%; overflow: hidden; }
+body { font-family: Inter, system-ui, sans-serif; background: #07080b; color: #e9ebf1; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+input[type=range] { accent-color: currentColor; }
+canvas.world { display: block; cursor: grab; touch-action: none; }
+canvas.world.paint { cursor: crosshair; }
+canvas.world:active { cursor: grabbing; }
+canvas.world.paint:active { cursor: crosshair; }
+#app { position: fixed; inset: 0; }
+
+#switcher { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 100; display: flex; align-items: center; gap: 4px; padding: 4px; border-radius: 999px; background: #fff; color: #111; font: 600 12px/1 Inter, sans-serif; box-shadow: 0 6px 24px rgba(0,0,0,.35); border: 2px dashed #ff3b6b; }
+#switcher button { width: 28px; height: 28px; border-radius: 50%; color: #111; font-size: 14px; }
+#switcher button:hover { background: #f1f1f1; }
+#switcher span { padding: 0 8px; white-space: nowrap; }
+
+.A { position: absolute; inset: 0; background: #06070a; }
+.A .mark { position: absolute; top: 22px; left: 26px; font-weight: 500; letter-spacing: .02em; font-size: 15px; color: #f2f3f7; pointer-events: none; }
+.A .mark small { display: block; font: 400 12px/1.6 'JetBrains Mono', monospace; color: #6f7686; margin-top: 2px; }
+.A .rail { position: absolute; right: 22px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 10px; align-items: center; }
+.A .chip { border-radius: 50%; transition: transform .15s; position: relative; }
+.A .chip:hover { transform: scale(1.18); }
+.A .chip.hidden { background: transparent !important; border: 2px solid; }
+.A .chip.sel { outline: 2px solid #fff; outline-offset: 3px; }
+.A .dock { position: absolute; left: 50%; bottom: 62px; transform: translateX(-50%); display: flex; align-items: center; gap: 4px; padding: 6px; border-radius: 16px; background: rgba(22,24,31,.72); backdrop-filter: blur(14px); border: 1px solid rgba(255,255,255,.06); box-shadow: 0 10px 40px rgba(0,0,0,.5); }
+.A .dock button { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; color: #c9cdd8; }
+.A .dock button:hover, .A .dock button.on { background: rgba(255,255,255,.08); color: #fff; }
+.A .dock .sep { width: 1px; height: 22px; background: rgba(255,255,255,.08); margin: 0 4px; }
+.A .dock input[type=range] { width: 90px; color: #e9ebf1; margin: 0 8px; }
+.A .dock .dot { width: 16px; height: 16px; border-radius: 50%; box-shadow: 0 0 0 2px rgba(255,255,255,.25); }
+.A .pop { position: absolute; bottom: 118px; left: 50%; transform: translateX(-50%); background: rgba(22,24,31,.9); backdrop-filter: blur(14px); border: 1px solid rgba(255,255,255,.06); border-radius: 14px; padding: 14px 16px; display: none; gap: 12px; flex-direction: column; min-width: 260px; font-size: 12px; color: #9aa1b2; }
+.A .pop.open { display: flex; }
+.A .pop label { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.A .pop input[type=range] { width: 130px; color: #e9ebf1; }
+.A .pop select { background: #11131a; color: #e9ebf1; border: 1px solid #2a2e3a; border-radius: 6px; padding: 4px 6px; font: inherit; }
+.A .card { position: absolute; pointer-events: none; background: rgba(22,24,31,.9); backdrop-filter: blur(14px); border: 1px solid rgba(255,255,255,.06); border-radius: 12px; padding: 10px 12px; font-size: 12px; color: #9aa1b2; display: none; min-width: 170px; }
+.A .card .ph { display: flex; align-items: center; gap: 10px; color: #fff; font-weight: 500; margin-bottom: 8px; }
+.A .card .big { width: 26px; height: 26px; border-radius: 7px; }
+.A .card .al { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.A .card .al i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.A .card .al.off { opacity: .45; }
+.A .pips { letter-spacing: 1px; font-size: 9px; color: #c9cdd8; }
+.A .stats { position: absolute; top: 22px; right: 70px; background: rgba(22,24,31,.72); backdrop-filter: blur(14px); border: 1px solid rgba(255,255,255,.06); border-radius: 14px; padding: 14px 16px; display: none; width: 230px; font-size: 12px; color: #9aa1b2; }
+.A .stats.open { display: block; }
+.A .stats .n { font: 500 22px/1.1 'JetBrains Mono', monospace; color: #fff; }
+.A .stats .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+
+.B { position: absolute; inset: 0; background: #f4efe4; color: #2b2721; display: grid; grid-template-columns: minmax(0, 1fr) 360px; font-family: Fraunces, Georgia, serif; }
+.B .stage { position: relative; margin: 28px 0 28px 28px; border: 1px solid #2b2721; background: #f8f4ea; overflow: hidden; }
+.B .side { padding: 34px 32px 80px; display: flex; flex-direction: column; gap: 22px; overflow: auto; }
+.B h1 { font-weight: 300; font-style: italic; font-size: 26px; letter-spacing: -.01em; }
+.B .gen { font-weight: 300; font-size: 64px; line-height: .9; letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+.B .gen small { display: block; font: 400 11px/1.6 Inter, sans-serif; letter-spacing: .14em; text-transform: uppercase; color: #8a8173; margin-top: 8px; }
+.B .facts { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid #2b2721; border-bottom: 1px solid #d8d0bf; }
+.B .facts div { padding: 10px 0; font-size: 22px; font-weight: 300; font-variant-numeric: tabular-nums; }
+.B .facts small { display: block; font: 400 10px/1.4 Inter, sans-serif; letter-spacing: .12em; text-transform: uppercase; color: #8a8173; }
+.B .label { font: 500 10px/1.4 Inter, sans-serif; letter-spacing: .14em; text-transform: uppercase; color: #8a8173; margin-bottom: 8px; }
+.B canvas.tree { width: 100%; height: 220px; display: block; cursor: pointer; }
+.B .controls { display: flex; flex-wrap: wrap; gap: 6px 18px; font: 500 13px/1 Inter, sans-serif; }
+.B .controls button { padding: 6px 0; border-bottom: 1px solid transparent; }
+.B .controls button:hover, .B .controls button.on { border-bottom-color: #2b2721; }
+.B .sliders { display: grid; gap: 10px; font: 400 12px/1 Inter, sans-serif; color: #5c554a; }
+.B .sliders label { display: grid; grid-template-columns: 80px 1fr 44px; align-items: center; gap: 10px; }
+.B .sliders input { color: #2b2721; width: 100%; }
+.B .specimen { font-size: 15px; line-height: 1.5; }
+.B .specimen .sw { display: inline-block; width: 12px; height: 12px; border-radius: 50%; vertical-align: -1px; margin-right: 4px; }
+.B .specimen .muted { color: #8a8173; font-style: italic; }
+
+.C { position: absolute; inset: 0; background: radial-gradient(ellipse at center, #11131c 0%, #050608 70%); display: flex; flex-direction: column; align-items: center; }
+.C .top { width: 100%; display: flex; justify-content: space-between; align-items: center; padding: 18px 26px; font-size: 13px; color: #8d93a3; }
+.C .top b { color: #fff; font-weight: 600; letter-spacing: .04em; }
+.C .top .ctl { display: flex; gap: 6px; align-items: center; }
+.C .top .ctl button { padding: 7px 12px; border-radius: 999px; border: 1px solid #23262f; color: #c9cdd8; font-size: 12px; }
+.C .top .ctl button:hover, .C .top .ctl button.on { border-color: #e9ebf1; color: #fff; }
+.C .top input[type=range] { width: 90px; color: #e9ebf1; }
+.C .dish { position: relative; flex: 1; width: 100%; display: grid; place-items: center; }
+.C .ring { position: absolute; cursor: pointer; }
+.C canvas.world { position: absolute; border-radius: 50%; }
+.C .legend { position: absolute; top: 74px; left: 26px; font: 400 11px/1.4 'JetBrains Mono', monospace; color: #6f7686; display: flex; flex-direction: column; gap: 8px; }
+.C .legend i { display: inline-block; width: 18px; height: 3px; vertical-align: middle; margin-right: 6px; border-radius: 2px; }
+.C .tip { position: absolute; pointer-events: none; display: none; font: 400 11px/1.5 'JetBrains Mono', monospace; color: #c9cdd8; background: rgba(10,11,15,.92); border: 1px solid #23262f; border-radius: 8px; padding: 8px 10px; }
+.C .tip i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="switcher"><button id="prev" aria-label="Previous variant">&larr;</button><span id="vlabel"></span><button id="next" aria-label="Next variant">&rarr;</button></div>
+
+<script id="genetics-model">
+const Genetics = (() => {
+  function rand(world) {
+    let t = (world.rngState = (world.rngState + 0x6d2b79f5) | 0);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+
+  function wrapHue(h) {
+    return ((h % 360) + 360) % 360;
+  }
+
+  function parseRule(text) {
+    const m = /^\s*B([0-8]*)\s*\/\s*S([0-8]*)\s*$/i.exec(text);
+    if (!m) return null;
+    const birth = new Array(9).fill(false);
+    const survive = new Array(9).fill(false);
+    for (const c of m[1]) birth[+c] = true;
+    for (const c of m[2]) survive[+c] = true;
+    return { birth, survive, text: `B${[...new Set(m[1])].sort().join('')}/S${[...new Set(m[2])].sort().join('')}` };
+  }
+
+  function create({ size, seed, rule, mutationRate = 0, mutationMagnitude = 12 }) {
+    const n = size * size;
+    return {
+      width: size, height: size, generation: 0, rngState: seed | 0,
+      rule: parseRule(rule), mutationRate, mutationMagnitude,
+      alive: new Uint8Array(n), a1: new Int32Array(n), a2: new Int32Array(n),
+      nextAlive: new Uint8Array(n), nextA1: new Int32Array(n), nextA2: new Int32Array(n),
+      alleles: { hue: [], dom: [], parent: [], born: [], name: [] },
+      founders: [], lastBirths: 0, lastSurprises: 0, lastMutations: 0, totalSurprises: 0,
+      populationHistory: [],
+    };
+  }
+
+  function addAllele(world, hue, dom, parent, name) {
+    const A = world.alleles;
+    A.hue.push(wrapHue(hue)); A.dom.push(dom); A.parent.push(parent);
+    A.born.push(world.generation); A.name.push(name);
+    return A.hue.length - 1;
+  }
+
+  function addFounder(world, { name, hue, dominance }) {
+    const id = addAllele(world, hue, dominance, -1, name);
+    world.founders.push(id);
+    return id;
+  }
+
+  function phenotype(world, a, b) {
+    const { hue, dom } = world.alleles;
+    if (a === b) return { hue: hue[a], showA: true, showB: true };
+    if (dom[a] > dom[b]) return { hue: hue[a], showA: true, showB: false };
+    if (dom[b] > dom[a]) return { hue: hue[b], showA: false, showB: true };
+    const ha = hue[a], hb = hue[b];
+    let d = wrapHue(hb - ha);
+    let mid;
+    if (d === 180) mid = wrapHue(Math.min(ha, hb) + 90);
+    else if (d < 180) mid = wrapHue(ha + d / 2);
+    else mid = wrapHue(ha - (360 - d) / 2);
+    return { hue: mid, showA: true, showB: true };
+  }
+
+  function setCell(world, i, a, b) { world.alive[i] = 1; world.a1[i] = a; world.a2[i] = b; }
+  function clearCell(world, i) { world.alive[i] = 0; }
+  function clearAll(world) { world.alive.fill(0); }
+
+  function pairsFrom(ids) {
+    const pairs = [];
+    for (const a of ids) for (const b of ids) pairs.push([a, b]);
+    return pairs;
+  }
+
+  function soup(world, { density, pairs, x0 = 0, y0 = 0, x1 = world.width, y1 = world.height }) {
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
+      if (rand(world) < density) {
+        const [a, b] = pairs[Math.floor(rand(world) * pairs.length)];
+        setCell(world, y * world.width + x, a, b);
+      }
+    }
+  }
+
+  function step(world) {
+    const { width: w, height: h, alive, a1, a2, nextAlive, nextA1, nextA2, rule, alleles } = world;
+    const live = [];
+    for (let i = 0; i < alive.length; i++) if (alive[i]) live.push(i);
+    if (world.founders.length === 0) addFounder(world, { name: 'Founder', hue: 200, dominance: 1 });
+    let mutated = false;
+    const pass = (p) => (rand(world) < 0.5 ? a1[p] : a2[p]);
+    const draw = () => live.length > 0
+      ? pass(live[Math.floor(rand(world) * live.length)])
+      : world.founders[Math.floor(rand(world) * world.founders.length)];
+    const mutate = (id) => {
+      if (world.mutationRate > 0 && rand(world) < world.mutationRate) {
+        mutated = true;
+        world.lastMutations++;
+        const hue = alleles.hue[id] + (rand(world) * 2 - 1) * world.mutationMagnitude;
+        return addAllele(world, hue, Math.floor(rand(world) * 4), id, null);
+      }
+      return id;
+    };
+    const nb = new Int32Array(8);
+    let births = 0, surprises = 0;
+    world.lastMutations = 0;
+    for (let y = 0; y < h; y++) {
+      const ym = ((y - 1 + h) % h) * w, y0 = y * w, yp = ((y + 1) % h) * w;
+      for (let x = 0; x < w; x++) {
+        const xm = (x - 1 + w) % w, xp = (x + 1) % w;
+        let n = 0;
+        const around = [ym + xm, ym + x, ym + xp, y0 + xm, y0 + xp, yp + xm, yp + x, yp + xp];
+        for (let k = 0; k < 8; k++) if (alive[around[k]]) nb[n++] = around[k];
+        const i = y0 + x;
+        if (alive[i]) {
+          if (rule.survive[n]) { nextAlive[i] = 1; nextA1[i] = a1[i]; nextA2[i] = a2[i]; }
+          else nextAlive[i] = 0;
+        } else if (rule.birth[n]) {
+          mutated = false;
+          let ca, cb, p1 = -1, p2 = -1;
+          if (n >= 2) {
+            const i1 = Math.floor(rand(world) * n);
+            let i2 = Math.floor(rand(world) * (n - 1));
+            if (i2 >= i1) i2++;
+            p1 = nb[i1]; p2 = nb[i2];
+            ca = pass(p1); cb = pass(p2);
+          } else if (n === 1) {
+            p1 = nb[0];
+            ca = pass(p1); cb = draw();
+          } else {
+            ca = draw(); cb = draw();
+          }
+          ca = mutate(ca); cb = mutate(cb);
+          nextAlive[i] = 1; nextA1[i] = ca; nextA2[i] = cb;
+          births++;
+          if (p2 >= 0 && !mutated) {
+            const c = phenotype(world, ca, cb).hue;
+            const h1 = phenotype(world, a1[p1], a2[p1]).hue;
+            const h2 = phenotype(world, a1[p2], a2[p2]).hue;
+            if (c !== h1 && c !== h2) surprises++;
+          }
+        } else nextAlive[i] = 0;
+      }
+    }
+    world.alive = nextAlive; world.nextAlive = alive;
+    world.a1 = nextA1; world.nextA1 = a1;
+    world.a2 = nextA2; world.nextA2 = a2;
+    world.generation++;
+    world.lastBirths = births; world.lastSurprises = surprises; world.totalSurprises += surprises;
+    let pop = 0;
+    for (let i = 0; i < world.alive.length; i++) pop += world.alive[i];
+    world.populationHistory.push(pop);
+    if (world.populationHistory.length > 400) world.populationHistory.shift();
+  }
+
+  function census(world) {
+    const count = world.alleles.hue.length;
+    const copies = new Int32Array(count), showing = new Int32Array(count), hiding = new Int32Array(count);
+    const bins = new Array(36).fill(0);
+    let population = 0;
+    const { alive, a1, a2 } = world;
+    for (let i = 0; i < alive.length; i++) {
+      if (!alive[i]) continue;
+      population++;
+      const a = a1[i], b = a2[i];
+      const p = phenotype(world, a, b);
+      bins[Math.floor(p.hue / 10) % 36]++;
+      copies[a]++; copies[b]++;
+      if (a === b) { showing[a]++; continue; }
+      if (p.showA) showing[a]++; else hiding[a]++;
+      if (p.showB) showing[b]++; else hiding[b]++;
+    }
+    const living = [];
+    for (let id = 0; id < count; id++) if (copies[id] > 0) living.push({ id, copies: copies[id], showing: showing[id], hiding: hiding[id] });
+    living.sort((x, y) => y.copies - x.copies);
+    return { population, living, bins, hidden: living.filter((l) => l.showing === 0).length };
+  }
+
+  function lineage(world, id) {
+    const chain = [];
+    for (let cur = id; cur >= 0; cur = world.alleles.parent[cur]) chain.push(cur);
+    return chain;
+  }
+
+  function oklchToRgb(L, C, hDeg) {
+    const h = (hDeg * Math.PI) / 180;
+    const a = C * Math.cos(h), b = C * Math.sin(h);
+    const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+    const m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+    const s = (L - 0.0894841775 * a - 1.291485548 * b) ** 3;
+    const lin = [
+      4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+      -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+      -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
+    ];
+    return lin.map((v) => {
+      const c = v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(Math.max(v, 0), 1 / 2.4) - 0.055;
+      return Math.round(Math.min(1, Math.max(0, c)) * 255);
+    });
+  }
+
+  return { parseRule, create, addFounder, phenotype, setCell, clearCell, clearAll, pairsFrom, soup, step, census, lineage, oklchToRgb };
+})();
+</script>
+
+<script id="shared-runtime">
+const S = {
+  world: null, running: true, gps: 15, acc: 0, tool: 'look', highlight: -1,
+  brushHue: 20, brushAlleles: new Map(), census: null, lastCensus: 0, listeners: new Set(),
+};
+
+function newWorld({ size = 160, seed = (Date.now() & 0x7fffffff), founders = 3, density = 0.3, rule = 'B3/S23', mutationRate = 0.01, mutationMagnitude = 30 } = {}) {
+  const w = Genetics.create({ size, seed, rule, mutationRate, mutationMagnitude });
+  const base = (seed % 360);
+  const doms = [2, 1, 0, 3, 1, 2];
+  const ids = [];
+  for (let k = 0; k < founders; k++) ids.push(Genetics.addFounder(w, { name: null, hue: base + (k * 360) / founders, dominance: doms[k % doms.length] }));
+  Genetics.soup(w, { density, pairs: Genetics.pairsFrom(ids) });
+  S.world = w; S.highlight = -1; S.brushAlleles = new Map();
+  S.census = Genetics.census(w);
+  emit();
+}
+
+function emit() { for (const f of S.listeners) f(); }
+function refreshCensus() { S.census = Genetics.census(S.world); S.lastCensus = performance.now(); }
+
+function makePalette(L, C) {
+  const t = new Uint32Array(720);
+  for (let i = 0; i < 720; i++) { const [r, g, b] = Genetics.oklchToRgb(L, C, i / 2); t[i] = (255 << 24) | (b << 16) | (g << 8) | r; }
+  return { table: t, css: (h) => { const [r, g, b] = Genetics.oklchToRgb(L, C, h); return `rgb(${r},${g},${b})`; }, at: (h) => t[Math.floor(h * 2) % 720] };
+}
+const rgba = (r, g, b) => (255 << 24) | (b << 16) | (g << 8) | r;
+
+function createView(canvas, { palette, bg, dim, hiddenInk, shape, initialScale = 7, onInspect }) {
+  const ctx = canvas.getContext('2d');
+  const cam = { ox: 0, oy: 0, s: initialScale };
+  let img = null, px = null, W = 0, H = 0, dirty = true, colors = null;
+  function resize() {
+    const r = canvas.getBoundingClientRect();
+    W = Math.max(1, Math.floor(r.width)); H = Math.max(1, Math.floor(r.height));
+    canvas.width = W; canvas.height = H;
+    img = ctx.createImageData(W, H); px = new Uint32Array(img.data.buffer);
+    dirty = true;
+  }
+  function center() {
+    const w = S.world;
+    cam.ox = Math.round(W / 2 - (w.width * cam.s) / 2); cam.oy = Math.round(H / 2 - (w.height * cam.s) / 2);
+    dirty = true;
+  }
+  function mask(s) {
+    const m = new Uint8Array(s * s);
+    for (let y = 0; y < s; y++) for (let x = 0; x < s; x++) {
+      let on = 1;
+      if (s >= 4 && shape === 'gap') on = x < s - 1 && y < s - 1 ? 1 : 0;
+      if (s >= 4 && shape === 'dot') { const dx = x + 0.5 - s / 2, dy = y + 0.5 - s / 2; on = dx * dx + dy * dy <= (s * 0.42) ** 2 ? 1 : 0; }
+      m[y * s + x] = on;
+    }
+    return m;
+  }
+  function draw() {
+    const w = S.world, n = w.width * w.height;
+    if (!colors || colors.length !== n) colors = new Uint32Array(n);
+    const { alive, a1, a2 } = w, hl = S.highlight;
+    for (let i = 0; i < n; i++) {
+      if (!alive[i]) { colors[i] = bg; continue; }
+      const a = a1[i], b = a2[i], p = Genetics.phenotype(w, a, b);
+      if (hl >= 0) {
+        if (a === hl || b === hl) colors[i] = (a === hl && p.showA) || (b === hl && p.showB) ? palette.at(p.hue) : hiddenInk;
+        else colors[i] = dim;
+      } else colors[i] = palette.at(p.hue);
+    }
+    const s = cam.s, m = mask(s), ww = w.width, wh = w.height;
+    const colCell = new Int32Array(W), colIn = new Int32Array(W);
+    for (let x = 0; x < W; x++) { const r = x - cam.ox, c = Math.floor(r / s); colCell[x] = ((c % ww) + ww) % ww; colIn[x] = r - c * s; }
+    for (let y = 0; y < H; y++) {
+      const r = y - cam.oy, c = Math.floor(r / s), row = (((c % wh) + wh) % wh) * ww, inY = (r - c * s) * s, o = y * W;
+      for (let x = 0; x < W; x++) px[o + x] = m[inY + colIn[x]] ? colors[row + colCell[x]] : bg;
+    }
+    ctx.putImageData(img, 0, 0);
+    dirty = false;
+  }
+  function cellAt(mx, my) {
+    const w = S.world;
+    const cx = Math.floor((mx - cam.ox) / cam.s), cy = Math.floor((my - cam.oy) / cam.s);
+    return (((cy % w.height) + w.height) % w.height) * w.width + (((cx % w.width) + w.width) % w.width);
+  }
+  function brushAllele() {
+    const key = S.brushHue;
+    if (!S.brushAlleles.has(key)) S.brushAlleles.set(key, Genetics.addFounder(S.world, { name: null, hue: S.brushHue, dominance: 2 }));
+    return S.brushAlleles.get(key);
+  }
+  function paint(i) {
+    const w = S.world, a = brushAllele(), cx = i % w.width, cy = Math.floor(i / w.width);
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      if (Math.abs(dx) + Math.abs(dy) > 1) continue;
+      Genetics.setCell(w, (((cy + dy) % w.height + w.height) % w.height) * w.width + (((cx + dx) % w.width + w.width) % w.width), a, a);
+    }
+    dirty = true;
+  }
+  let down = null;
+  const pos = (e) => { const r = canvas.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+  canvas.addEventListener('pointerdown', (e) => {
+    const [x, y] = pos(e); down = { x, y, ox: cam.ox, oy: cam.oy, moved: false };
+    canvas.setPointerCapture(e.pointerId);
+    if (S.tool === 'paint') paint(cellAt(x, y));
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!down) return;
+    const [x, y] = pos(e);
+    if (Math.hypot(x - down.x, y - down.y) > 3) down.moved = true;
+    if (S.tool === 'paint') { paint(cellAt(x, y)); return; }
+    cam.ox = down.ox + (x - down.x); cam.oy = down.oy + (y - down.y); dirty = true;
+  });
+  canvas.addEventListener('pointerup', (e) => {
+    if (down && !down.moved && S.tool === 'look' && onInspect) { const [x, y] = pos(e); onInspect(cellAt(x, y), e.clientX, e.clientY); }
+    if (S.tool === 'paint') { refreshCensus(); emit(); }
+    down = null;
+  });
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const [x, y] = pos(e);
+    const ns = Math.max(2, Math.min(32, cam.s + (e.deltaY < 0 ? 1 : -1) * Math.max(1, Math.round(cam.s / 6))));
+    if (ns === cam.s) return;
+    cam.ox = Math.round(x - ((x - cam.ox) * ns) / cam.s); cam.oy = Math.round(y - ((y - cam.oy) * ns) / cam.s);
+    cam.s = ns; dirty = true;
+  }, { passive: false });
+  let centered = false;
+  const fit = () => { resize(); if (!centered && W > 1 && H > 1) { center(); centered = true; } };
+  const ro = new ResizeObserver(fit);
+  ro.observe(canvas);
+  fit();
+  return {
+    markDirty() { dirty = true; },
+    frame(force) { if (dirty || force) draw(); },
+    recenter: center,
+    zoom(d) { const x = W / 2, y = H / 2, ns = Math.max(2, Math.min(32, cam.s + d)); cam.ox = Math.round(x - ((x - cam.ox) * ns) / cam.s); cam.oy = Math.round(y - ((y - cam.oy) * ns) / cam.s); cam.s = ns; dirty = true; },
+    destroy() { ro.disconnect(); },
+  };
+}
+
+let current = null, lastT = 0;
+function loop(t) {
+  const dt = Math.min(0.1, (t - lastT) / 1000); lastT = t;
+  let stepped = 0;
+  if (S.running && S.world) {
+    S.acc += dt * S.gps;
+    const n = Math.min(Math.floor(S.acc), 10);
+    S.acc -= Math.floor(S.acc);
+    for (let k = 0; k < n; k++) Genetics.step(S.world);
+    stepped = n;
+  }
+  if (stepped && t - S.lastCensus > 200) { refreshCensus(); emit(); }
+  if (current) current.frame(stepped > 0);
+  requestAnimationFrame(loop);
+}
+function stepOnce() { Genetics.step(S.world); refreshCensus(); emit(); if (current) current.frame(true); }
+function toggleHighlight(id) { S.highlight = S.highlight === id ? -1 : id; emit(); if (current) current.frame(true); }
+
+function dominancePips(d) { return '●'.repeat(d + 1) + '○'.repeat(3 - d); }
+
+const ICON = {
+  play: '<svg width="16" height="16" viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z" fill="currentColor"/></svg>',
+  pause: '<svg width="16" height="16" viewBox="0 0 16 16"><rect x="3.5" y="2.5" width="3" height="11" rx="1" fill="currentColor"/><rect x="9.5" y="2.5" width="3" height="11" rx="1" fill="currentColor"/></svg>',
+  step: '<svg width="16" height="16" viewBox="0 0 16 16"><path d="M3 2.5v11l7-5.5z" fill="currentColor"/><rect x="11" y="2.5" width="2.2" height="11" rx="1" fill="currentColor"/></svg>',
+  hand: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M5 8V3.5a1 1 0 0 1 2 0V7m0-3.5V2.5a1 1 0 0 1 2 0V7m0-3.5a1 1 0 0 1 2 0V8m0-2.5a1 1 0 0 1 2 0V10a4.5 4.5 0 0 1-4.5 4.5h-.6A4 4 0 0 1 4 12.6L2.6 9.8a1 1 0 0 1 1.7-1L5 10"/></svg>',
+  shuffle: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h2.5c3 0 4 8 7 8H14M2 12h2.5c1.2 0 2-1.2 2.7-2.6M11.5 4H14m-2-2 2 2-2 2m0 4 2 2-2 2M9 6.4C9.6 5 10.4 4 11.5 4"/></svg>',
+  gear: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"/></svg>',
+  chart: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M2.5 13.5h11M4.5 11V8M8 11V4M11.5 11V6.5"/></svg>',
+  plus: '<svg width="16" height="16" viewBox="0 0 16 16" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg>',
+  minus: '<svg width="16" height="16" viewBox="0 0 16 16" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M3 8h10"/></svg>',
+};
+</script>
+
+<script id="variant-a">
+function VariantA(root) {
+  const P = makePalette(0.76, 0.17);
+  root.innerHTML = `<div class="A">
+    <canvas class="world"></canvas>
+    <div class="mark">genetic life<small id="a-gen"></small></div>
+    <div class="rail" id="a-rail"></div>
+    <div class="stats" id="a-stats"></div>
+    <div class="card" id="a-card"></div>
+    <div class="pop" id="a-pop">
+      <label>Rule <select id="a-rule"><option value="B3/S23">Conway</option><option value="B36/S23">HighLife</option><option value="B3678/S34678">Day &amp; Night</option><option value="B2/S">Seeds</option></select></label>
+      <label>Mutation <input id="a-mr" type="range" min="0" max="60" value="${Math.round(S.world.mutationRate * 1000)}"></label>
+      <label>Mutation reach <input id="a-mm" type="range" min="5" max="90" value="${S.world.mutationMagnitude}"></label>
+      <label>Brush colour <input id="a-bh" type="range" min="0" max="359" value="${S.brushHue}"></label>
+    </div>
+    <div class="dock">
+      <button id="a-play" title="Play / pause (space)"></button>
+      <button id="a-step" title="Step">${ICON.step}</button>
+      <input id="a-speed" type="range" min="1" max="60" value="${S.gps}" title="Speed">
+      <div class="sep"></div>
+      <button id="a-look" title="Look: drag to pan, click to inspect">${ICON.hand}</button>
+      <button id="a-paint" title="Paint"><span class="dot" id="a-dot"></span></button>
+      <div class="sep"></div>
+      <button id="a-zo" title="Zoom out">${ICON.minus}</button>
+      <button id="a-zi" title="Zoom in">${ICON.plus}</button>
+      <div class="sep"></div>
+      <button id="a-new" title="New world">${ICON.shuffle}</button>
+      <button id="a-stat" title="Stats">${ICON.chart}</button>
+      <button id="a-set" title="Settings">${ICON.gear}</button>
+    </div>
+  </div>`;
+  const $ = (id) => root.querySelector('#' + id);
+  const canvas = root.querySelector('canvas.world');
+  canvas.style.width = '100%'; canvas.style.height = '100%';
+  const card = $('a-card');
+  let inspected = -1;
+  const view = createView(canvas, {
+    palette: P, bg: rgba(6, 7, 10), dim: rgba(30, 32, 40), hiddenInk: rgba(255, 255, 255), shape: 'gap', initialScale: 7,
+    onInspect(i, cx, cy) { inspected = S.world.alive[i] ? i : -1; card.style.left = cx + 16 + 'px'; card.style.top = cy + 16 + 'px'; renderCard(); },
+  });
+  function renderCard() {
+    if (inspected < 0 || !S.world.alive[inspected]) { card.style.display = 'none'; return; }
+    const w = S.world, a = w.a1[inspected], b = w.a2[inspected], p = Genetics.phenotype(w, a, b), A = w.alleles;
+    const row = (id, on) => `<div class="al ${on ? '' : 'off'}"><i style="background:${P.css(A.hue[id])}"></i>${on ? 'shown' : 'hidden'} <span class="pips">${dominancePips(A.dom[id])}</span></div>`;
+    card.innerHTML = `<div class="ph"><span class="big" style="background:${P.css(p.hue)}"></span>${a === b ? 'Pure' : p.showA && p.showB ? 'Blend' : 'Carrier'}</div>${row(a, p.showA)}${a === b ? '' : row(b, p.showB)}`;
+    card.style.display = 'block';
+  }
+  function setTool(t) { S.tool = t; $('a-look').classList.toggle('on', t === 'look'); $('a-paint').classList.toggle('on', t === 'paint'); canvas.classList.toggle('paint', t === 'paint'); if (t === 'paint') card.style.display = 'none'; }
+  function syncDot() { $('a-dot').style.background = P.css(S.brushHue); }
+  $('a-play').onclick = () => { S.running = !S.running; render(); };
+  $('a-step').onclick = () => { S.running = false; stepOnce(); };
+  $('a-speed').oninput = (e) => { S.gps = +e.target.value; };
+  $('a-look').onclick = () => setTool('look');
+  $('a-paint').onclick = () => { setTool('paint'); };
+  $('a-zi').onclick = () => view.zoom(1);
+  $('a-zo').onclick = () => view.zoom(-1);
+  $('a-new').onclick = () => { newWorld({ rule: $('a-rule').value, mutationRate: +$('a-mr').value / 1000, mutationMagnitude: +$('a-mm').value }); inspected = -1; view.recenter(); view.markDirty(); };
+  $('a-stat').onclick = () => { $('a-stats').classList.toggle('open'); $('a-stat').classList.toggle('on'); };
+  $('a-set').onclick = () => { $('a-pop').classList.toggle('open'); $('a-set').classList.toggle('on'); };
+  $('a-rule').onchange = (e) => { S.world.rule = Genetics.parseRule(e.target.value); };
+  $('a-rule').value = S.world.rule.text;
+  $('a-mr').oninput = (e) => { S.world.mutationRate = +e.target.value / 1000; };
+  $('a-mm').oninput = (e) => { S.world.mutationMagnitude = +e.target.value; };
+  $('a-bh').oninput = (e) => { S.brushHue = +e.target.value; syncDot(); };
+  setTool(S.tool); syncDot();
+  function render() {
+    const c = S.census, w = S.world;
+    $('a-play').innerHTML = S.running ? ICON.pause : ICON.play;
+    $('a-gen').textContent = `gen ${w.generation.toLocaleString()} · ${c.population.toLocaleString()} alive`;
+    const top = c.living.slice(0, 14), max = Math.max(1, ...top.map((l) => l.copies));
+    $('a-rail').innerHTML = top.map((l) => {
+      const d = 10 + 18 * Math.sqrt(l.copies / max), col = P.css(w.alleles.hue[l.id]);
+      const hidden = l.showing === 0;
+      return `<button class="chip ${hidden ? 'hidden' : ''} ${S.highlight === l.id ? 'sel' : ''}" data-id="${l.id}" title="${hidden ? 'Hidden in every carrier' : 'Visible'} · ${Math.round((100 * l.copies) / (2 * c.population))}% of genes" style="width:${d}px;height:${d}px;background:${col};border-color:${col}"></button>`;
+    }).join('');
+    if ($('a-stats').classList.contains('open')) {
+      $('a-stats').innerHTML = `<div class="grid"><div><div class="n">${c.population.toLocaleString()}</div>alive</div><div><div class="n">${w.generation.toLocaleString()}</div>generation</div><div><div class="n">${c.living.length}</div>colour genes</div><div><div class="n">${c.hidden}</div>fully hidden</div></div>${spark(w.populationHistory)}`;
+    }
+    renderCard();
+  }
+  function spark(h) {
+    if (h.length < 2) return '';
+    const m = Math.max(...h, 1), pts = h.map((v, k) => `${(k / (h.length - 1)) * 198},${40 - (v / m) * 36}`).join(' ');
+    return `<svg width="198" height="42"><polyline points="${pts}" fill="none" stroke="#e9ebf1" stroke-width="1.2" opacity=".7"/></svg>`;
+  }
+  $('a-rail').addEventListener('click', (e) => { const b = e.target.closest('.chip'); if (b) toggleHighlight(+b.dataset.id); });
+  S.listeners.add(render); render();
+  return { frame: (stepped) => { if (stepped) view.markDirty(); view.frame(); }, destroy() { S.listeners.delete(render); view.destroy(); }, rerender: () => { view.markDirty(); } };
+}
+VariantA.title = 'Dish';
+</script>
+
+<script id="variant-b">
+function VariantB(root) {
+  const P = makePalette(0.62, 0.17);
+  root.innerHTML = `<div class="B">
+    <div class="stage"><canvas class="world"></canvas></div>
+    <div class="side">
+      <h1>Genetic Life</h1>
+      <div class="gen" id="b-gen"></div>
+      <div class="facts" id="b-facts"></div>
+      <div><div class="label">Lineage · hue over time</div><canvas class="tree" id="b-tree"></canvas></div>
+      <div><div class="label">Specimen</div><div class="specimen" id="b-spec"><span class="muted">Click an organism to read its genes.</span></div></div>
+      <div class="controls">
+        <button id="b-play"></button><button id="b-step">Step</button><button id="b-look">Look</button><button id="b-paint">Paint</button><button id="b-new">New world</button>
+      </div>
+      <div class="sliders">
+        <label>Pace <input id="b-speed" type="range" min="1" max="60" value="${S.gps}"><span id="b-speedv"></span></label>
+        <label>Mutation <input id="b-mr" type="range" min="0" max="60" value="${Math.round(S.world.mutationRate * 1000)}"><span id="b-mrv"></span></label>
+        <label>Brush <input id="b-bh" type="range" min="0" max="359" value="${S.brushHue}"><span id="b-bhv"></span></label>
+      </div>
+    </div>
+  </div>`;
+  const $ = (id) => root.querySelector('#' + id);
+  const canvas = root.querySelector('canvas.world');
+  canvas.style.width = '100%'; canvas.style.height = '100%';
+  let spec = -1;
+  const view = createView(canvas, {
+    palette: P, bg: rgba(248, 244, 234), dim: rgba(222, 215, 200), hiddenInk: rgba(43, 39, 33), shape: 'dot', initialScale: 9,
+    onInspect(i) { spec = S.world.alive[i] ? i : -1; renderSpec(); },
+  });
+  function renderSpec() {
+    const el = $('b-spec'), w = S.world;
+    if (spec < 0) { el.innerHTML = '<span class="muted">Click an organism to read its genes.</span>'; return; }
+    if (!w.alive[spec]) { el.innerHTML = '<span class="muted">This organism has died.</span>'; return; }
+    const a = w.a1[spec], b = w.a2[spec], p = Genetics.phenotype(w, a, b), A = w.alleles;
+    const sw = (h) => `<span class="sw" style="background:${P.css(h)}"></span>`;
+    const desc = a === b ? 'two copies of the same gene' : p.showA && p.showB ? 'two equal genes, blended' : `carrying a hidden ${sw(A.hue[p.showA ? b : a])}gene`;
+    el.innerHTML = `${sw(p.hue)} Shows this colour, ${desc}.<br><span class="muted">Genes: ${sw(A.hue[a])}dominance ${A.dom[a]} &nbsp; ${sw(A.hue[b])}dominance ${A.dom[b]}</span>`;
+  }
+  const tree = $('b-tree'), tctx = tree.getContext('2d');
+  let treePts = [];
+  function drawTree() {
+    const r = tree.getBoundingClientRect(); tree.width = r.width * 2; tree.height = r.height * 2;
+    const W = tree.width, H = tree.height, w = S.world, A = w.alleles, G = Math.max(1, w.generation);
+    tctx.clearRect(0, 0, W, H);
+    const living = new Map(S.census.living.map((l) => [l.id, l]));
+    const keep = new Uint8Array(A.hue.length);
+    for (const id of living.keys()) for (let c = id; c >= 0 && !keep[c]; c = A.parent[c]) keep[c] = 1;
+    const X = (g) => 8 + (g / G) * (W - 16), Y = (h) => 8 + (h / 360) * (H - 16);
+    tctx.lineWidth = 1.5;
+    for (let id = 0; id < A.hue.length; id++) {
+      if (!keep[id] || A.parent[id] < 0) continue;
+      const p = A.parent[id];
+      tctx.strokeStyle = P.css(A.hue[id]); tctx.globalAlpha = living.has(id) ? 0.9 : 0.35;
+      tctx.beginPath(); tctx.moveTo(X(A.born[p]), Y(A.hue[p])); tctx.lineTo(X(A.born[id]), Y(A.hue[p])); tctx.lineTo(X(A.born[id]), Y(A.hue[id])); tctx.stroke();
+    }
+    tctx.globalAlpha = 1; treePts = [];
+    for (const [id, l] of living) {
+      const x = X(A.born[id]), y = Y(A.hue[id]), rr = 2 + 7 * Math.sqrt(l.copies / (2 * S.census.population));
+      tctx.beginPath(); tctx.arc(x, y, rr * 2, 0, 7);
+      if (l.showing === 0) { tctx.strokeStyle = P.css(A.hue[id]); tctx.lineWidth = 2; tctx.stroke(); } else { tctx.fillStyle = P.css(A.hue[id]); tctx.fill(); }
+      if (S.highlight === id) { tctx.strokeStyle = '#2b2721'; tctx.lineWidth = 2; tctx.beginPath(); tctx.arc(x, y, rr * 2 + 5, 0, 7); tctx.stroke(); }
+      treePts.push([x / 2, y / 2, id]);
+    }
+  }
+  tree.addEventListener('click', (e) => {
+    const r = tree.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+    let best = -1, bd = 12 * 12;
+    for (const [px, py, id] of treePts) { const d = (px - x) ** 2 + (py - y) ** 2; if (d < bd) { bd = d; best = id; } }
+    if (best >= 0) toggleHighlight(best); else if (S.highlight >= 0) toggleHighlight(S.highlight);
+  });
+  function setTool(t) { S.tool = t; $('b-look').classList.toggle('on', t === 'look'); $('b-paint').classList.toggle('on', t === 'paint'); canvas.classList.toggle('paint', t === 'paint'); }
+  $('b-play').onclick = () => { S.running = !S.running; render(); };
+  $('b-step').onclick = () => { S.running = false; stepOnce(); };
+  $('b-look').onclick = () => setTool('look');
+  $('b-paint').onclick = () => setTool('paint');
+  $('b-new').onclick = () => { newWorld({ mutationRate: +$('b-mr').value / 1000 }); spec = -1; view.recenter(); view.markDirty(); };
+  $('b-speed').oninput = (e) => { S.gps = +e.target.value; render(); };
+  $('b-mr').oninput = (e) => { S.world.mutationRate = +e.target.value / 1000; render(); };
+  $('b-bh').oninput = (e) => { S.brushHue = +e.target.value; render(); };
+  setTool(S.tool);
+  function render() {
+    const c = S.census, w = S.world;
+    $('b-play').textContent = S.running ? 'Pause' : 'Run';
+    $('b-gen').innerHTML = `${w.generation.toLocaleString()}<small>generation</small>`;
+    $('b-facts').innerHTML = `<div>${c.population.toLocaleString()}<small>alive</small></div><div>${c.living.length}<small>colour genes</small></div><div>${c.hidden}<small>hidden</small></div>`;
+    $('b-speedv').textContent = S.gps + '/s';
+    $('b-mrv').textContent = (w.mutationRate * 100).toFixed(1) + '%';
+    $('b-bhv').innerHTML = `<span class="sw" style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${P.css(S.brushHue)}"></span>`;
+    drawTree(); renderSpec();
+  }
+  S.listeners.add(render); render();
+  return { frame: (stepped) => { if (stepped) view.markDirty(); view.frame(); }, destroy() { S.listeners.delete(render); view.destroy(); } };
+}
+VariantB.title = 'Field notebook';
+</script>
+
+<script id="variant-c">
+function VariantC(root) {
+  const P = makePalette(0.76, 0.17);
+  root.innerHTML = `<div class="C">
+    <div class="top"><b>GENETIC LIFE</b>
+      <div class="ctl"><button id="c-play"></button><button id="c-step">step</button><input id="c-speed" type="range" min="1" max="60" value="${S.gps}" title="Speed"></div>
+      <div class="ctl"><button id="c-look">look</button><button id="c-paint">paint</button><button id="c-new">new</button><span id="c-gen" style="margin-left:10px;font-family:'JetBrains Mono',monospace;font-size:12px"></span></div>
+    </div>
+    <div class="dish" id="c-dish"><canvas class="ring" id="c-ring"></canvas><canvas class="world"></canvas><div class="tip" id="c-tip"></div></div>
+    <div class="legend"><span><i style="background:#e9ebf1"></i>genes carried</span><span><i style="background:#6f7686"></i>colours shown</span><span>○ hidden gene</span></div>
+  </div>`;
+  const $ = (id) => root.querySelector('#' + id);
+  const canvas = root.querySelector('canvas.world'), ring = $('c-ring'), dish = $('c-dish'), tip = $('c-tip');
+  let D = 400;
+  function layout() {
+    const r = dish.getBoundingClientRect();
+    D = Math.max(200, Math.floor(Math.min(r.width, r.height) - 200));
+    canvas.style.width = canvas.style.height = D + 'px';
+    const R = D + 170; ring.style.width = ring.style.height = R + 'px'; ring.width = ring.height = R * 2;
+    drawRing();
+  }
+  const view = createView(canvas, {
+    palette: P, bg: rgba(9, 10, 14), dim: rgba(28, 30, 38), hiddenInk: rgba(255, 255, 255), shape: 'square', initialScale: 6,
+    onInspect(i, cx, cy) {
+      const w = S.world, dr = dish.getBoundingClientRect();
+      if (!w.alive[i]) { tip.style.display = 'none'; return; }
+      const a = w.a1[i], b = w.a2[i], p = Genetics.phenotype(w, a, b), A = w.alleles;
+      const g = (id, on) => `<div><i style="background:${P.css(A.hue[id])}"></i>${A.hue[id].toFixed(0)}° d${A.dom[id]} ${on ? 'shown' : 'hidden'}</div>`;
+      tip.innerHTML = `<div><i style="background:${P.css(p.hue)}"></i><b>${a === b ? 'pure' : p.showA && p.showB ? 'blend' : 'carrier'}</b></div>${g(a, p.showA)}${a === b ? '' : g(b, p.showB)}`;
+      tip.style.left = cx - dr.left + 14 + 'px'; tip.style.top = cy - dr.top + 14 + 'px'; tip.style.display = 'block';
+    },
+  });
+  const rctx = ring.getContext('2d');
+  let marks = [];
+  function drawRing() {
+    const W = ring.width, cx = W / 2, c = S.census, A = S.world.alleles;
+    rctx.clearRect(0, 0, W, W);
+    const r0 = D + 12, bins = 120, geneBins = new Array(bins).fill(0), showBins = new Array(bins).fill(0);
+    for (const l of c.living) { const k = Math.floor((A.hue[l.id] / 360) * bins) % bins; geneBins[k] += l.copies; showBins[k] += l.showing; }
+    const gm = Math.max(1, ...geneBins), sm = Math.max(1, ...showBins);
+    for (let k = 0; k < bins; k++) {
+      const a0 = (k / bins) * Math.PI * 2 - Math.PI / 2, a1 = ((k + 1) / bins) * Math.PI * 2 - Math.PI / 2 - 0.006, hue = ((k + 0.5) / bins) * 360;
+      rctx.strokeStyle = P.css(hue);
+      rctx.globalAlpha = 0.12; rctx.lineWidth = 2; rctx.beginPath(); rctx.arc(cx, cx, r0 + 60, a0, a1); rctx.stroke();
+      if (geneBins[k]) { rctx.globalAlpha = 0.95; rctx.lineWidth = 4 + 60 * (geneBins[k] / gm); rctx.beginPath(); rctx.arc(cx, cx, r0 + 90 + rctx.lineWidth / 2, a0, a1); rctx.stroke(); }
+      if (showBins[k]) { rctx.globalAlpha = 0.45; rctx.lineWidth = 3 + 26 * (showBins[k] / sm); rctx.beginPath(); rctx.arc(cx, cx, r0 + 40, a0, a1); rctx.stroke(); }
+    }
+    rctx.globalAlpha = 1; marks = [];
+    for (const l of c.living) {
+      const ang = (A.hue[l.id] / 360) * Math.PI * 2 - Math.PI / 2, rr = r0 + 70;
+      const x = cx + Math.cos(ang) * rr, y = cx + Math.sin(ang) * rr;
+      marks.push([x / 2, y / 2, l.id]);
+      if (l.showing === 0 || S.highlight === l.id) {
+        rctx.beginPath(); rctx.arc(x, y, S.highlight === l.id ? 9 : 6, 0, 7);
+        rctx.strokeStyle = S.highlight === l.id ? '#fff' : P.css(A.hue[l.id]); rctx.lineWidth = 2.5; rctx.stroke();
+      }
+    }
+  }
+  ring.addEventListener('click', (e) => {
+    const r = ring.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+    const cx = r.width / 2, ang = (Math.atan2(y - cx, x - cx) + Math.PI / 2 + Math.PI * 2) % (Math.PI * 2), hue = (ang / (Math.PI * 2)) * 360;
+    let best = -1, bd = 1e9;
+    for (const l of S.census.living) { const h = S.world.alleles.hue[l.id]; const d = Math.min(Math.abs(h - hue), 360 - Math.abs(h - hue)) - Math.log(l.copies + 1) * 0.3; if (d < bd) { bd = d; best = l.id; } }
+    if (best >= 0) toggleHighlight(best);
+  });
+  function setTool(t) { S.tool = t; $('c-look').classList.toggle('on', t === 'look'); $('c-paint').classList.toggle('on', t === 'paint'); canvas.classList.toggle('paint', t === 'paint'); tip.style.display = 'none'; }
+  $('c-play').onclick = () => { S.running = !S.running; render(); };
+  $('c-step').onclick = () => { S.running = false; stepOnce(); };
+  $('c-speed').oninput = (e) => { S.gps = +e.target.value; };
+  $('c-look').onclick = () => setTool('look');
+  $('c-paint').onclick = () => setTool('paint');
+  $('c-new').onclick = () => { newWorld(); view.recenter(); view.markDirty(); tip.style.display = 'none'; };
+  setTool(S.tool);
+  function render() {
+    $('c-play').textContent = S.running ? 'pause' : 'play';
+    $('c-gen').textContent = `gen ${S.world.generation} · ${S.census.living.length} genes · ${S.census.hidden} hidden`;
+    drawRing();
+  }
+  const ro = new ResizeObserver(layout); ro.observe(dish);
+  layout();
+  S.listeners.add(render); render();
+  return { frame: (stepped) => { if (stepped) view.markDirty(); view.frame(); }, destroy() { S.listeners.delete(render); view.destroy(); ro.disconnect(); } };
+}
+VariantC.title = 'Chromatic wheel';
+</script>
+
+<script id="switcher-script">
+const VARIANTS = { A: VariantA, B: VariantB, C: VariantC };
+const KEYS = Object.keys(VARIANTS);
+function mount(key) {
+  if (!VARIANTS[key]) key = 'A';
+  if (current) current.destroy();
+  S.highlight = -1;
+  const app = document.getElementById('app');
+  app.innerHTML = '';
+  current = VARIANTS[key](app);
+  const url = new URL(location.href); url.searchParams.set('variant', key); history.replaceState(null, '', url);
+  document.getElementById('vlabel').textContent = `${key} (${VARIANTS[key].title})`;
+  document.getElementById('switcher').dataset.key = key;
+}
+function cycle(d) { const k = document.getElementById('switcher').dataset.key; mount(KEYS[(KEYS.indexOf(k) + d + KEYS.length) % KEYS.length]); }
+document.getElementById('prev').onclick = () => cycle(-1);
+document.getElementById('next').onclick = () => cycle(1);
+document.addEventListener('keydown', (e) => {
+  const t = e.target; if (t.matches && t.matches('input, textarea, select, [contenteditable]')) return;
+  if (e.key === 'ArrowLeft') cycle(-1);
+  if (e.key === 'ArrowRight') cycle(1);
+  if (e.code === 'Space') { e.preventDefault(); S.running = !S.running; emit(); }
+});
+newWorld();
+mount(new URLSearchParams(location.search).get('variant') || 'A');
+requestAnimationFrame((t) => { lastT = t; requestAnimationFrame(loop); });
+</script>
+</body>
+</html>
