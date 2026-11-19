@@ -71,7 +71,7 @@ struct Entry {
 pub(crate) struct AlleleTree {
     entries: Vec<Entry>,
     free: Vec<Slot>,
-    founding: usize,
+    founding_count: usize,
 }
 
 impl AlleleTree {
@@ -90,19 +90,13 @@ impl AlleleTree {
                 })
                 .collect(),
             free: vec![],
-            founding: alleles.len(),
+            founding_count: alleles.len(),
         }
     }
 
-    /// The `i`th Founding Allele, for `i` in `0..founding_count()`.
-    pub(crate) fn founding(&self, i: usize) -> Slot {
-        assert!(i < self.founding, "Founding Allele {i} out of range");
-        Slot::at(i)
-    }
-
-    /// Number of Founding Alleles.
+    /// Number of Founding Alleles; they occupy slots `0..founding_count()`.
     pub(crate) fn founding_count(&self) -> usize {
-        self.founding
+        self.founding_count
     }
 
     /// One more than the highest slot index in use.

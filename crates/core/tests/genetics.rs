@@ -127,6 +127,7 @@ fn founding_allele_count_must_be_in_range() {
     assert!(World::soup_with_alleles(32, 32, 0.4, 1, 0).is_err());
     assert!(World::soup_with_alleles(32, 32, 0.4, 1, 17).is_err());
     assert!(World::soup_with_alleles(32, 32, 0.4, 1, 1).is_ok());
+    assert!(World::from_genotypes(16, 16, 1, &[], &[]).is_err());
 }
 
 #[test]
