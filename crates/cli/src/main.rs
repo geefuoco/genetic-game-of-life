@@ -1,5 +1,5 @@
 use clap::Parser;
-use genetic_life_core::{Rule, World};
+use genetic_life_core::{Census, Rule, World, DEFAULT_FOUNDING_ALLELES};
 use serde::Serialize;
 use std::process::ExitCode;
 
@@ -22,6 +22,9 @@ struct Args {
     /// day-and-night, seeds, gnarl, life-without-death.
     #[arg(long, default_value = "conway", value_parser = Rule::resolve)]
     rule: Rule,
+    /// Number of Founding Alleles (1 to 16).
+    #[arg(long, default_value_t = DEFAULT_FOUNDING_ALLELES)]
+    alleles: usize,
     /// Number of Generations to run.
     #[arg(long, default_value_t = 100)]
     generations: u64,
@@ -31,11 +34,71 @@ struct Args {
 struct Stats {
     generation: u64,
     population: usize,
+    census: CensusJson,
+}
+
+#[derive(Serialize)]
+struct CensusJson {
+    population: usize,
+    generation: u64,
+    alleles: Vec<AlleleJson>,
+    fully_hidden: Vec<AlleleRef>,
+    population_history: Vec<usize>,
+}
+
+#[derive(Serialize)]
+struct AlleleRef {
+    hue: f64,
+    dominance: u8,
+}
+
+#[derive(Serialize)]
+struct AlleleJson {
+    hue: f64,
+    dominance: u8,
+    copies: usize,
+    shown: usize,
+    hidden: usize,
+}
+
+impl From<Census> for CensusJson {
+    fn from(census: Census) -> Self {
+        Self {
+            population: census.population,
+            generation: census.generation,
+            alleles: census
+                .alleles
+                .into_iter()
+                .map(|a| AlleleJson {
+                    hue: a.allele.hue,
+                    dominance: a.allele.dominance,
+                    copies: a.copies,
+                    shown: a.shown,
+                    hidden: a.hidden,
+                })
+                .collect(),
+            fully_hidden: census
+                .fully_hidden
+                .into_iter()
+                .map(|a| AlleleRef {
+                    hue: a.hue,
+                    dominance: a.dominance,
+                })
+                .collect(),
+            population_history: census.population_history,
+        }
+    }
 }
 
 fn main() -> ExitCode {
     let args = Args::parse();
-    let mut world = match World::soup(args.width, args.height, args.density, args.seed) {
+    let mut world = match World::soup_with_alleles(
+        args.width,
+        args.height,
+        args.density,
+        args.seed,
+        args.alleles,
+    ) {
         Ok(world) => world,
         Err(error) => {
             eprintln!("error: {error}");
@@ -47,6 +110,7 @@ fn main() -> ExitCode {
     let stats = Stats {
         generation: world.generation(),
         population: world.population(),
+        census: world.census().into(),
     };
     println!(
         "{}",
