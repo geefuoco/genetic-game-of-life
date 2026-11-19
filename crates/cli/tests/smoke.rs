@@ -1,3 +1,5 @@
+use genetic_life_core::World;
+use std::path::PathBuf;
 use std::process::{Command, Output};
 
 fn run(args: &[&str]) -> Output {
@@ -136,4 +138,68 @@ fn invalid_mutation_settings_fail_with_a_message() {
         assert!(!output.status.success());
         assert!(!output.stderr.is_empty());
     }
+}
+
+fn temp_path(name: &str) -> String {
+    let path: PathBuf = [env!("CARGO_TARGET_TMPDIR"), name].iter().collect();
+    path.to_str().unwrap().to_string()
+}
+
+#[test]
+fn writes_a_valid_snapshot_of_the_resulting_world() {
+    let out = temp_path("writes_a_valid_snapshot.snapshot");
+    let json = stats(&["--seed", "7", "--generations", "10", "--out", &out]);
+    let world = World::from_snapshot(&std::fs::read(&out).unwrap()).unwrap();
+    assert_eq!(world.generation(), 10);
+    assert_eq!(json["population"], world.population());
+}
+
+#[test]
+fn resuming_from_a_snapshot_continues_the_run() {
+    let base = ["--rule", "highlife", "--mutation-rate", "0.2"];
+    let straight = stats(&[&base[..], &["--seed", "42", "--generations", "25"]].concat());
+    let out = temp_path("resuming_from_a_snapshot.snapshot");
+    stats(
+        &[
+            &base[..],
+            &["--seed", "42", "--generations", "10", "--out", &out],
+        ]
+        .concat(),
+    );
+    let resumed = stats(&["--snapshot", &out, "--generations", "15"]);
+    assert_eq!(resumed, straight);
+}
+
+#[test]
+fn a_corrupt_snapshot_fails_with_a_message() {
+    let path = temp_path("a_corrupt_snapshot.snapshot");
+    std::fs::write(&path, b"not a snapshot").unwrap();
+    let output = run(&["--snapshot", &path]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("snapshot"));
+}
+
+#[test]
+fn a_missing_snapshot_file_fails_with_a_message() {
+    let output = run(&["--snapshot", &temp_path("no_such_file.snapshot")]);
+    assert!(!output.status.success());
+    assert!(!output.stderr.is_empty());
+}
+
+#[test]
+fn a_snapshot_cannot_be_combined_with_seed_or_settings() {
+    let path = temp_path("combined.snapshot");
+    stats(&["--seed", "1", "--generations", "0", "--out", &path]);
+    for flags in [["--seed", "1"], ["--width", "32"], ["--rule", "seeds"]] {
+        let output = run(&[&["--snapshot", &path][..], &flags].concat());
+        assert!(!output.status.success(), "{flags:?}");
+        assert!(!output.stderr.is_empty());
+    }
+}
+
+#[test]
+fn either_a_seed_or_a_snapshot_is_required() {
+    let output = run(&["--generations", "1"]);
+    assert!(!output.status.success());
+    assert!(!output.stderr.is_empty());
 }

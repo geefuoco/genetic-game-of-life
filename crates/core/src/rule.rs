@@ -85,6 +85,17 @@ impl Rule {
         Self { birth, survival }
     }
 
+    /// The birth and survival bitmasks.
+    pub(crate) fn masks(&self) -> (u16, u16) {
+        (self.birth, self.survival)
+    }
+
+    /// The Rule with these bitmasks, or `None` if either names a count above 8.
+    pub(crate) fn from_checked_masks(birth: u16, survival: u16) -> Option<Self> {
+        let valid = |mask: u16| mask >> 9 == 0;
+        (valid(birth) && valid(survival)).then_some(Self { birth, survival })
+    }
+
     /// Parses B/S notation such as `B3/S23`. Case-insensitive; `B0` and empty
     /// sets (`B2/S`) are allowed.
     pub fn parse(notation: &str) -> Result<Self, RuleError> {

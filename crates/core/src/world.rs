@@ -5,6 +5,7 @@ use crate::genetics::{
 use crate::mutation::MutationSettings;
 use crate::rng::Rng;
 use crate::rule::Rule;
+use crate::snapshot::{self, invalid, Reader, SnapshotError, Writer};
 use std::cell::OnceCell;
 use std::fmt;
 
@@ -96,13 +97,7 @@ impl World {
         seed: u64,
         founding_alleles: usize,
     ) -> Result<Self, WorldError> {
-        check_size(width, height)?;
-        if !(0.0..=1.0).contains(&density) {
-            return Err(WorldError::DensityOutOfRange(density));
-        }
-        if !(1..=MAX_FOUNDING_ALLELES).contains(&founding_alleles) {
-            return Err(WorldError::FoundingAllelesOutOfRange(founding_alleles));
-        }
+        check_soup(width, height, density, founding_alleles)?;
         let mut rng = Rng::new(seed);
         let live: Vec<bool> = (0..width * height)
             .map(|_| rng.next_f64() < density)
@@ -162,7 +157,7 @@ impl World {
             return Err(WorldError::FoundingAllelesOutOfRange(alleles.len()));
         }
         for &allele in alleles {
-            if !(0.0..360.0).contains(&allele.hue) || allele.dominance > MAX_DOMINANCE {
+            if !allele.is_valid() {
                 return Err(WorldError::InvalidAllele(allele));
             }
         }
@@ -204,6 +199,97 @@ impl World {
             mutation: MutationSettings::default(),
             rng,
         }
+    }
+
+    /// Exports the World's full state as a compressed Snapshot in format
+    /// [`crate::SNAPSHOT_VERSION`]; [`World::from_snapshot`] resumes the run
+    /// exactly.
+    pub fn snapshot(&self) -> Vec<u8> {
+        let mut writer = Writer::default();
+        writer.index(self.width);
+        writer.index(self.height);
+        writer.u64(self.generation);
+        let (birth, survival) = self.rule.masks();
+        writer.u16(birth);
+        writer.u16(survival);
+        writer.f64(self.mutation.rate());
+        writer.f64(self.mutation.magnitude());
+        writer.u32(Rng::VERSION);
+        writer.u64(self.rng.state());
+        self.tree.encode(&mut writer);
+        writer.index(self.population());
+        for (index, cell) in self.cells.iter().enumerate() {
+            if let Some([a, b]) = cell {
+                writer.index(index);
+                writer.index(a.index());
+                writer.index(b.index());
+            }
+        }
+        for &population in &self.population_history {
+            writer.index(population);
+        }
+        snapshot::seal(&writer.bytes)
+    }
+
+    /// Imports a Snapshot made by [`World::snapshot`]. Fails, without
+    /// panicking, on an unsupported format or PRNG version, on truncated or
+    /// corrupt data, and on a payload that describes no valid World.
+    pub fn from_snapshot(bytes: &[u8]) -> Result<Self, SnapshotError> {
+        let payload = snapshot::open(bytes)?;
+        let mut reader = Reader::new(&payload);
+        let (width, height) = (reader.index()?, reader.index()?);
+        check_size(width, height).map_err(invalid)?;
+        let generation = reader.u64()?;
+        let rule = Rule::from_checked_masks(reader.u16()?, reader.u16()?)
+            .ok_or_else(|| invalid("the rule names a neighbour count above 8"))?;
+        let mutation = MutationSettings::new(reader.f64()?, reader.f64()?).map_err(invalid)?;
+        let rng_version = reader.u32()?;
+        if rng_version != Rng::VERSION {
+            return Err(SnapshotError::UnsupportedRng(rng_version));
+        }
+        let rng = Rng::new(reader.u64()?);
+        let tree = AlleleTree::decode(&mut reader)?;
+        let population = reader.index()?;
+        reader.expect_items(population as u64, 12)?;
+        let mut cells = vec![None; width * height];
+        let mut lowest_allowed = 0;
+        for _ in 0..population {
+            let index = reader.index()?;
+            if index < lowest_allowed || index >= cells.len() {
+                return Err(invalid(format!(
+                    "live cell index {index} is out of order or outside the world"
+                )));
+            }
+            let genotype = [reader.index()?, reader.index()?];
+            if let Some(slot) = genotype.into_iter().find(|&slot| !tree.is_retained(slot)) {
+                return Err(invalid(format!(
+                    "live cell {index} carries allele slot {slot}, which is not retained"
+                )));
+            }
+            cells[index] = Some(genotype.map(Slot::at));
+            lowest_allowed = index + 1;
+        }
+        reader.expect_items(generation, 4)?;
+        let population_history = (0..=generation)
+            .map(|_| reader.index())
+            .collect::<Result<Vec<_>, _>>()?;
+        if population_history.last() != Some(&cells.iter().flatten().count()) {
+            return Err(invalid(
+                "the population history does not end with the live cell count",
+            ));
+        }
+        reader.finish()?;
+        Ok(Self {
+            width,
+            height,
+            cells,
+            tree,
+            population_history,
+            generation,
+            rule,
+            mutation,
+            rng,
+        })
     }
 
     /// Applies the Rule once to every Cell simultaneously, then prunes the
@@ -506,6 +592,23 @@ impl Tally {
 /// Uniform index in `0..n` using one draw.
 fn pick(rng: &mut Rng, n: usize) -> usize {
     ((rng.next_f64() * n as f64) as usize).min(n - 1)
+}
+
+/// Fails unless [`World::soup_with_alleles`] accepts these settings.
+pub(crate) fn check_soup(
+    width: usize,
+    height: usize,
+    density: f64,
+    founding_alleles: usize,
+) -> Result<(), WorldError> {
+    check_size(width, height)?;
+    if !(0.0..=1.0).contains(&density) {
+        return Err(WorldError::DensityOutOfRange(density));
+    }
+    if !(1..=MAX_FOUNDING_ALLELES).contains(&founding_alleles) {
+        return Err(WorldError::FoundingAllelesOutOfRange(founding_alleles));
+    }
+    Ok(())
 }
 
 fn check_size(width: usize, height: usize) -> Result<(), WorldError> {

@@ -1,4 +1,5 @@
 use crate::genetics::Allele;
+use crate::snapshot::{invalid, Reader, SnapshotError, Writer};
 
 /// Where the World stores an Allele; Genotypes hold these.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,6 +93,175 @@ impl AlleleTree {
             free: vec![],
             founding_count: alleles.len(),
         }
+    }
+
+    /// Whether `slot` holds a retained Allele.
+    pub(crate) fn is_retained(&self, slot: usize) -> bool {
+        self.entries
+            .get(slot)
+            .is_some_and(|entry| entry.record.is_some())
+    }
+
+    /// Writes the tree in the Snapshot payload layout.
+    pub(crate) fn encode(&self, writer: &mut Writer) {
+        writer.index(self.founding_count);
+        writer.index(self.entries.len());
+        for (index, entry) in self.entries.iter().enumerate() {
+            writer.u32(entry.version);
+            writer.u8(u8::from(entry.record.is_some()));
+            if let Some(record) = entry.record {
+                writer.f64(record.allele.hue);
+                writer.u8(record.allele.dominance);
+                if index >= self.founding_count {
+                    let source = record.source.expect("every mutant has a source");
+                    writer.index(source.index());
+                }
+                writer.u64(record.origin);
+            }
+        }
+        writer.index(self.free.len());
+        for slot in &self.free {
+            writer.index(slot.index());
+        }
+    }
+
+    /// Reads a tree written by [`AlleleTree::encode`], rejecting any tree the
+    /// World could not have built.
+    pub(crate) fn decode(reader: &mut Reader) -> Result<Self, SnapshotError> {
+        let founding_count = reader.index()?;
+        let slot_count = reader.index()?;
+        if founding_count == 0 || founding_count > slot_count {
+            return Err(invalid(format!(
+                "founding allele count {founding_count} is outside 1..={slot_count}, the slot count"
+            )));
+        }
+        reader.expect_items(slot_count as u64, 5)?;
+        let mut entries = Vec::with_capacity(slot_count);
+        for index in 0..slot_count {
+            let version = reader.u32()?;
+            let record = match reader.u8()? {
+                0 if index < founding_count => {
+                    return Err(invalid(format!(
+                        "founding allele slot {index} is not retained"
+                    )))
+                }
+                0 => None,
+                1 => Some(Self::decode_record(
+                    reader,
+                    index,
+                    founding_count,
+                    slot_count,
+                )?),
+                flag => {
+                    return Err(invalid(format!(
+                        "allele slot {index} has retained flag {flag}, expected 0 or 1"
+                    )))
+                }
+            };
+            entries.push(Entry { version, record });
+        }
+        let free_count = reader.index()?;
+        reader.expect_items(free_count as u64, 4)?;
+        let mut listed = vec![false; slot_count];
+        let mut free = Vec::with_capacity(free_count);
+        for _ in 0..free_count {
+            let index = reader.index()?;
+            if entries
+                .get(index)
+                .is_none_or(|entry| entry.record.is_some())
+                || listed[index]
+            {
+                return Err(invalid(format!(
+                    "free allele slot {index} is not an empty slot or is listed twice"
+                )));
+            }
+            listed[index] = true;
+            free.push(Slot::at(index));
+        }
+        if entries
+            .iter()
+            .filter(|entry| entry.record.is_none())
+            .count()
+            != free_count
+        {
+            return Err(invalid(
+                "an empty allele slot is missing from the free slots",
+            ));
+        }
+        let tree = Self {
+            entries,
+            free,
+            founding_count,
+        };
+        tree.check_sources()?;
+        Ok(tree)
+    }
+
+    fn decode_record(
+        reader: &mut Reader,
+        index: usize,
+        founding_count: usize,
+        slot_count: usize,
+    ) -> Result<Record, SnapshotError> {
+        let allele = Allele {
+            hue: reader.f64()?,
+            dominance: reader.u8()?,
+        };
+        if !allele.is_valid() {
+            return Err(invalid(format!(
+                "allele slot {index} has hue {} or dominance {} out of range",
+                allele.hue, allele.dominance
+            )));
+        }
+        let source = if index < founding_count {
+            None
+        } else {
+            let source = reader.index()?;
+            if source >= slot_count {
+                return Err(invalid(format!(
+                    "allele slot {index} mutated from slot {source}, beyond the slot count {slot_count}"
+                )));
+            }
+            Some(Slot::at(source))
+        };
+        Ok(Record {
+            allele,
+            source,
+            origin: reader.u64()?,
+        })
+    }
+
+    /// Fails unless every retained Allele's chain of sources runs through
+    /// retained Alleles back to a Founding Allele.
+    fn check_sources(&self) -> Result<(), SnapshotError> {
+        let mut rooted = vec![false; self.entries.len()];
+        rooted[..self.founding_count].fill(true);
+        for start in 0..self.entries.len() {
+            if rooted[start] || self.entries[start].record.is_none() {
+                continue;
+            }
+            let mut chain = vec![];
+            let mut slot = start;
+            while !rooted[slot] {
+                if chain.len() == self.entries.len() {
+                    return Err(invalid(format!("allele slot {start} descends from itself")));
+                }
+                let source = self.entries[slot]
+                    .record
+                    .and_then(|record| record.source)
+                    .ok_or_else(|| {
+                        invalid(format!(
+                            "allele slot {slot} is a source but is not retained"
+                        ))
+                    })?;
+                chain.push(slot);
+                slot = source.index();
+            }
+            for slot in chain {
+                rooted[slot] = true;
+            }
+        }
+        Ok(())
     }
 
     /// Number of Founding Alleles; they occupy slots `0..founding_count()`.

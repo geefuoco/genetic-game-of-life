@@ -1,14 +1,22 @@
 use clap::Parser;
-use genetic_life_core::{Census, MutationSettings, Rule, World, DEFAULT_FOUNDING_ALLELES};
+use genetic_life_core::{Census, MutationSettings, Rule, Soup, World, DEFAULT_FOUNDING_ALLELES};
 use serde::Serialize;
+use std::path::PathBuf;
 use std::process::ExitCode;
 
-/// Runs a seeded Soup for a number of Generations and prints stats as JSON.
+/// Runs a seeded Soup, or resumes a Snapshot, for a number of Generations and
+/// prints stats as JSON.
 #[derive(Parser)]
 struct Args {
     /// Seed fixing every random choice in the run.
+    #[arg(long, required_unless_present = "snapshot")]
+    seed: Option<u64>,
+    /// Snapshot file to resume instead of starting a seeded Soup.
+    #[arg(long, conflicts_with_all = SOUP_FLAGS)]
+    snapshot: Option<PathBuf>,
+    /// File to write the Snapshot of the resulting World to.
     #[arg(long)]
-    seed: u64,
+    out: Option<PathBuf>,
     /// World width in Cells (16 to 1024).
     #[arg(long, default_value_t = 64)]
     width: usize,
@@ -35,6 +43,18 @@ struct Args {
     #[arg(long, default_value_t = 100)]
     generations: u64,
 }
+
+/// Flags that describe a seeded Soup and so cannot be combined with a Snapshot.
+const SOUP_FLAGS: [&str; 8] = [
+    "seed",
+    "width",
+    "height",
+    "density",
+    "rule",
+    "alleles",
+    "mutation_rate",
+    "mutation_magnitude",
+];
 
 #[derive(Serialize)]
 struct Stats {
@@ -100,23 +120,16 @@ impl From<Census> for CensusJson {
 
 fn main() -> ExitCode {
     let args = Args::parse();
-    let mutation = match MutationSettings::new(args.mutation_rate, args.mutation_magnitude) {
-        Ok(mutation) => mutation,
-        Err(error) => return fail(error),
-    };
-    let mut world = match World::soup_with_alleles(
-        args.width,
-        args.height,
-        args.density,
-        args.seed,
-        args.alleles,
-    ) {
+    let mut world = match start(&args) {
         Ok(world) => world,
         Err(error) => return fail(error),
     };
-    world.set_rule(args.rule);
-    world.set_mutation(mutation);
     world.run(args.generations);
+    if let Some(out) = &args.out {
+        if let Err(error) = std::fs::write(out, world.snapshot()) {
+            return fail(format!("cannot write snapshot {}: {error}", out.display()));
+        }
+    }
     let census = world.census();
     let stats = Stats {
         generation: world.generation(),
@@ -129,6 +142,26 @@ fn main() -> ExitCode {
         serde_json::to_string(&stats).expect("stats serialise")
     );
     ExitCode::SUCCESS
+}
+
+/// The World to run: the Snapshot if one is given, otherwise the seeded Soup.
+fn start(args: &Args) -> Result<World, String> {
+    if let Some(path) = &args.snapshot {
+        let bytes = std::fs::read(path)
+            .map_err(|error| format!("cannot read snapshot {}: {error}", path.display()))?;
+        return World::from_snapshot(&bytes).map_err(|error| error.to_string());
+    }
+    let soup = Soup {
+        seed: args.seed.expect("clap requires a seed without a snapshot"),
+        rule: args.rule,
+        width: args.width,
+        height: args.height,
+        density: args.density,
+        founding_alleles: args.alleles,
+        mutation: MutationSettings::new(args.mutation_rate, args.mutation_magnitude)
+            .map_err(|error| error.to_string())?,
+    };
+    soup.world().map_err(|error| error.to_string())
 }
 
 fn fail(error: impl std::fmt::Display) -> ExitCode {
