@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = ["crates/core", "crates/cli", "crates/comment-check"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/geefuoco/genetic-game-of-life"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"

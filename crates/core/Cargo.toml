@@ -1,0 +1,13 @@
+[package]
+name = "genetic-life-core"
+description = "Headless torus World running Conway's Life from a seeded Soup"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dev-dependencies]
+proptest = "1"
+
+[lints]
+workspace = true
