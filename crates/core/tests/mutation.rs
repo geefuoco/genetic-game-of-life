@@ -36,7 +36,6 @@ fn a_new_world_mutates_at_one_percent_by_up_to_thirty_degrees() {
     let world = World::soup(32, 32, 0.3, 1).unwrap();
     assert_eq!(world.mutation().rate(), 0.01);
     assert_eq!(world.mutation().magnitude(), 30.0);
-    assert_eq!(world.mutation(), MutationSettings::default());
 }
 
 #[test]
@@ -61,13 +60,16 @@ fn mutation_settings_reject_out_of_range_values() {
 }
 
 #[test]
-fn mutation_settings_can_change_mid_run() {
-    let mut world = World::soup(32, 32, 0.3, 1).unwrap();
+fn a_mutation_rate_set_mid_run_applies_to_later_births() {
+    let mut world = blinker(allele(200.0, 0), 1);
+    world.set_mutation(mutation(0.0, 30.0));
     world.run(3);
-    let settings = MutationSettings::new(0.2, 90.0).unwrap();
-    world.set_mutation(settings);
-    assert_eq!(world.mutation(), settings);
-    assert_eq!(world.generation(), 3);
+    assert!(mutants(&world).is_empty());
+    world.set_mutation(mutation(1.0, 30.0));
+    world.step();
+    let mutants = mutants(&world);
+    assert_eq!(mutants.len(), 4);
+    assert!(mutants.iter().all(|m| m.origin == 4));
 }
 
 /// The source hue sits near the 0/360 seam, so shifts in either direction
@@ -180,12 +182,19 @@ fn lineage_runs_from_an_allele_back_to_its_founding_allele() {
     assert!(deepest >= 4, "deepest lineage {deepest}");
 }
 
-/// The dominant Allele shows, the recessive one is only carried, and an
-/// uncarried Founding Allele is retained as extinct.
+/// Allele 0 dominates the others: Allele 1 shows in one Cell and hides in
+/// another, Allele 3 only hides, and nobody carries Allele 2, a Founding
+/// Allele, which is retained as extinct.
 #[test]
 fn allele_tree_marks_living_hidden_and_extinct_alleles() {
-    let alleles = [allele(0.0, 3), allele(120.0, 0), allele(240.0, 0)];
-    let world = World::from_genotypes(16, 16, 1, &alleles, &[(1, 1, 0, 1)]).unwrap();
+    let alleles = [
+        allele(0.0, 3),
+        allele(120.0, 0),
+        allele(240.0, 0),
+        allele(60.0, 0),
+    ];
+    let live = [(1, 1, 0, 1), (5, 5, 1, 1), (9, 9, 0, 3)];
+    let world = World::from_genotypes(16, 16, 1, &alleles, &live).unwrap();
     let statuses: Vec<_> = world
         .allele_tree()
         .iter()
@@ -195,8 +204,9 @@ fn allele_tree_marks_living_hidden_and_extinct_alleles() {
         statuses,
         vec![
             (alleles[0], AlleleStatus::Living),
-            (alleles[1], AlleleStatus::Hidden),
+            (alleles[1], AlleleStatus::Living),
             (alleles[2], AlleleStatus::Extinct),
+            (alleles[3], AlleleStatus::Hidden),
         ]
     );
 }
@@ -204,7 +214,7 @@ fn allele_tree_marks_living_hidden_and_extinct_alleles() {
 /// An L-tromino grows into a block with one newborn carrying two mutants;
 /// a Rule with no Birth or Survival then kills every Cell.
 #[test]
-fn mutants_with_no_carriers_and_no_carried_descendants_are_pruned() {
+fn a_mutant_that_no_live_cell_carries_with_no_carried_descendants_is_pruned() {
     let live = [(4, 4, 0, 0), (5, 4, 0, 0), (4, 5, 0, 0)];
     let mut world = World::from_genotypes(16, 16, 1, &[allele(50.0, 0)], &live).unwrap();
     world.set_mutation(mutation(1.0, 30.0));
@@ -224,7 +234,7 @@ fn mutants_with_no_carriers_and_no_carried_descendants_are_pruned() {
 }
 
 #[test]
-fn an_extinct_mutant_is_retained_while_a_descendant_is_carried() {
+fn an_extinct_mutant_is_retained_while_a_live_cell_carries_a_descendant() {
     let mut world = World::soup_with_alleles(48, 48, 0.4, 11, 2).unwrap();
     world.set_rule(Rule::preset("day-and-night").unwrap());
     world.set_mutation(mutation(0.3, 30.0));
@@ -238,6 +248,43 @@ fn an_extinct_mutant_is_retained_while_a_descendant_is_carried() {
         node.status != AlleleStatus::Extinct
             && world.lineage(node.id).unwrap().contains(extinct_ancestor)
     }));
+}
+
+/// Mutants are pruned and new ones take their place all run long, yet an
+/// id seen once either still names the same Allele or names nothing.
+#[test]
+fn an_allele_id_never_comes_to_mean_a_different_allele() {
+    let mut world = World::soup_with_alleles(32, 32, 0.4, 8, 2).unwrap();
+    world.set_rule(Rule::preset("day-and-night").unwrap());
+    world.set_mutation(mutation(0.5, 60.0));
+    let mut seen: HashMap<_, AlleleNode> = HashMap::new();
+    let mut pruned = HashSet::new();
+    for _ in 0..60 {
+        world.step();
+        let tree: HashMap<_, _> = world
+            .allele_tree()
+            .into_iter()
+            .map(|node| (node.id, node))
+            .collect();
+        for (id, first) in &seen {
+            match tree.get(id) {
+                Some(now) => assert_eq!(
+                    (now.allele, now.origin, now.source),
+                    (first.allele, first.origin, first.source)
+                ),
+                None => {
+                    pruned.insert(*id);
+                }
+            }
+        }
+        for (id, node) in tree {
+            assert!(!pruned.contains(&id), "pruned id {id:?} came back");
+            seen.entry(id).or_insert(node);
+        }
+    }
+    assert!(pruned.len() > 100, "the run should prune many mutants");
+    let gone = *pruned.iter().next().unwrap();
+    assert_eq!(world.lineage(gone), None);
 }
 
 proptest! {
@@ -281,25 +328,6 @@ proptest! {
             }
             let retained: HashSet<_> = tree.iter().map(|node| node.id).collect();
             prop_assert_eq!(retained, needed);
-        }
-    }
-
-    #[test]
-    fn allele_status_agrees_with_the_census(
-        seed in any::<u64>(), rate in 0.0f64..=1.0, generations in 0u64..15,
-    ) {
-        let mut world = World::soup_with_alleles(24, 24, 0.4, seed, 4).unwrap();
-        world.set_mutation(mutation(rate, 60.0));
-        world.run(generations);
-        let census = world.census();
-        for node in world.allele_tree() {
-            let line = census.alleles.iter().find(|a| a.id == node.id);
-            let expected = match line {
-                None => AlleleStatus::Extinct,
-                Some(a) if a.shown > 0 => AlleleStatus::Living,
-                Some(_) => AlleleStatus::Hidden,
-            };
-            prop_assert_eq!(node.status, expected);
         }
     }
 

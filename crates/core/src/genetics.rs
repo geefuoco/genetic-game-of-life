@@ -3,7 +3,7 @@
 //! Only add, subtract, multiply and divide are used on hues, so results are
 //! identical natively and in WASM.
 
-use crate::allele_tree::AlleleId;
+use crate::allele_tree::{AlleleId, Slot};
 
 /// Highest Dominance Level an Allele can have.
 pub const MAX_DOMINANCE: u8 = 3;
@@ -21,7 +21,7 @@ pub struct Allele {
 }
 
 /// The pair of Alleles a live Cell carries.
-pub(crate) type Genotype = [AlleleId; 2];
+pub(crate) type Genotype = [Slot; 2];
 
 /// Census line for one living Allele.
 #[derive(Debug, Clone, Copy, PartialEq)]

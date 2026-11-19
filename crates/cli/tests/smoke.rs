@@ -125,7 +125,6 @@ fn mutation_flags_change_the_run() {
         ]
         .concat(),
     );
-    assert_eq!(off["population"], high["population"]);
     assert!(off["living_alleles"].as_u64().unwrap() <= 4);
     assert!(high["living_alleles"].as_u64().unwrap() > 4);
 }

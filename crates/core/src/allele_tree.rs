@@ -1,20 +1,31 @@
 use crate::genetics::Allele;
 
-/// Identity of an Allele within a World.
-///
-/// Unique among the Alleles the World retains; once an Allele is pruned its
-/// id may be given to a later mutant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct AlleleId(u32);
+/// Where the World stores an Allele; Genotypes hold these.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Slot(u32);
 
-impl AlleleId {
+impl Slot {
+    /// Slot of the first Founding Allele.
+    pub(crate) const FIRST_FOUNDING: Self = Self(0);
+
     pub(crate) fn index(self) -> usize {
         self.0 as usize
     }
 
-    pub(crate) fn from_index(index: usize) -> Self {
-        Self(u32::try_from(index).expect("fewer than 2^32 retained Alleles"))
+    /// The slot with index `i`.
+    pub(crate) fn at(i: usize) -> Self {
+        Self(u32::try_from(i).expect("fewer than 2^32 Alleles"))
     }
+}
+
+/// Identity of an Allele within a World.
+///
+/// An id never comes to mean a different Allele: once its Allele is pruned,
+/// queries for it find nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AlleleId {
+    slot: u32,
+    version: u32,
 }
 
 /// Where an Allele stands in the current population.
@@ -43,96 +54,122 @@ pub struct AlleleNode {
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Record {
     allele: Allele,
-    source: Option<AlleleId>,
+    source: Option<Slot>,
     origin: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Entry {
+    version: u32,
+    record: Option<Record>,
 }
 
 /// Every retained Allele and which Allele each mutated from.
 ///
-/// Founding Alleles are always retained, so they stay available as roots.
-/// Any other Allele is pruned once it has no Carriers and no carried
-/// descendants, and its slot is reused by a later mutant.
+/// Founding Alleles are always retained, so the empty-World fallback of
+/// Allele Pool draws can still find them. Any other Allele is pruned once no
+/// live Cell carries it or any of its descendants; a later mutant may take
+/// its slot under a new [`AlleleId`].
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct AlleleTree {
-    records: Vec<Option<Record>>,
-    free: Vec<usize>,
+    entries: Vec<Entry>,
+    free: Vec<Slot>,
 }
 
 impl AlleleTree {
-    /// A tree of Founding Alleles; the `i`th gets the id with index `i`.
+    /// A tree of Founding Alleles; the `i`th is stored in slot `i`.
     pub(crate) fn founded(alleles: &[Allele]) -> Self {
         Self {
-            records: alleles
+            entries: alleles
                 .iter()
-                .map(|&allele| {
-                    Some(Record {
+                .map(|&allele| Entry {
+                    version: 0,
+                    record: Some(Record {
                         allele,
                         source: None,
                         origin: 0,
-                    })
+                    }),
                 })
                 .collect(),
             free: vec![],
         }
     }
 
-    /// One more than the highest index any retained Allele can have.
-    pub(crate) fn capacity(&self) -> usize {
-        self.records.len()
+    /// One more than the highest slot index in use.
+    pub(crate) fn slot_bound(&self) -> usize {
+        self.entries.len()
     }
 
-    pub(crate) fn allele(&self, id: AlleleId) -> Allele {
-        self.record(id).allele
+    pub(crate) fn allele(&self, slot: Slot) -> Allele {
+        self.record(slot).allele
     }
 
-    fn record(&self, id: AlleleId) -> Record {
-        self.records[id.index()].expect("genotypes only refer to retained Alleles")
+    /// The identity of the Allele now stored in `slot`.
+    pub(crate) fn id(&self, slot: Slot) -> AlleleId {
+        AlleleId {
+            slot: slot.0,
+            version: self.entries[slot.index()].version,
+        }
+    }
+
+    fn record(&self, slot: Slot) -> Record {
+        self.entries[slot.index()]
+            .record
+            .expect("genotypes only refer to retained Alleles")
+    }
+
+    fn slot(&self, id: AlleleId) -> Option<Slot> {
+        let entry = self.entries.get(id.slot as usize)?;
+        (entry.version == id.version && entry.record.is_some()).then_some(Slot(id.slot))
     }
 
     /// Records a new Allele that mutated from `source` in Generation `origin`.
-    pub(crate) fn add_mutant(&mut self, source: AlleleId, allele: Allele, origin: u64) -> AlleleId {
+    pub(crate) fn add_mutant(&mut self, source: Slot, allele: Allele, origin: u64) -> Slot {
         let record = Some(Record {
             allele,
             source: Some(source),
             origin,
         });
         match self.free.pop() {
-            Some(index) => {
-                self.records[index] = record;
-                AlleleId::from_index(index)
+            Some(slot) => {
+                let entry = &mut self.entries[slot.index()];
+                entry.version = entry.version.wrapping_add(1);
+                entry.record = record;
+                slot
             }
             None => {
-                self.records.push(record);
-                AlleleId::from_index(self.records.len() - 1)
+                let slot = Slot::at(self.entries.len());
+                self.entries.push(Entry { version: 0, record });
+                slot
             }
         }
     }
 
-    /// Prunes every non-Founding Allele that is neither carried nor an
-    /// ancestor of a carried Allele. `carried[i]` says whether the Allele
-    /// with index `i` has a live Carrier.
-    pub(crate) fn prune(&mut self, carried: &[bool]) {
-        let mut keep = vec![false; self.records.len()];
-        for index in (0..self.records.len()).filter(|&i| carried[i]) {
-            let mut next = Some(index);
-            while let Some(i) = next.filter(|&i| !keep[i]) {
-                keep[i] = true;
-                next = self.records[i].and_then(|r| r.source).map(AlleleId::index);
+    /// Prunes every non-Founding Allele that is neither in `carried` nor an
+    /// ancestor of an Allele in it.
+    pub(crate) fn prune(&mut self, carried: impl IntoIterator<Item = Slot>) {
+        let mut keep = vec![false; self.entries.len()];
+        for slot in carried {
+            let mut next = Some(slot);
+            while let Some(slot) = next.filter(|s| !keep[s.index()]) {
+                keep[slot.index()] = true;
+                next = self.record(slot).source;
             }
         }
-        for (index, slot) in self.records.iter_mut().enumerate() {
-            if slot.is_some_and(|r| r.source.is_some()) && !keep[index] {
-                *slot = None;
-                self.free.push(index);
+        for (index, entry) in self.entries.iter_mut().enumerate() {
+            if entry.record.is_some_and(|r| r.source.is_some()) && !keep[index] {
+                entry.record = None;
+                self.free.push(Slot::at(index));
             }
         }
     }
 
-    /// Every retained Allele, each before its descendants, with `status`
-    /// giving the status of the Allele with index `i`.
-    pub(crate) fn nodes(&self, status: impl Fn(usize) -> AlleleStatus) -> Vec<AlleleNode> {
-        let mut nodes: Vec<AlleleNode> = (0..self.records.len())
-            .filter_map(|i| self.node(AlleleId::from_index(i), &status))
+    /// Every retained Allele, each before its descendants.
+    pub(crate) fn nodes(&self, status: impl Fn(Slot) -> AlleleStatus) -> Vec<AlleleNode> {
+        let mut nodes: Vec<AlleleNode> = (0..self.entries.len())
+            .map(Slot::at)
+            .filter(|slot| self.entries[slot.index()].record.is_some())
+            .map(|slot| self.node(slot, &status))
             .collect();
         nodes.sort_by_key(|node| (node.origin, node.id));
         nodes
@@ -143,23 +180,25 @@ impl AlleleTree {
     pub(crate) fn lineage(
         &self,
         id: AlleleId,
-        status: impl Fn(usize) -> AlleleStatus,
+        status: impl Fn(Slot) -> AlleleStatus,
     ) -> Option<Vec<AlleleNode>> {
-        let mut chain = vec![self.node(id, &status)?];
-        while let Some(source) = chain[chain.len() - 1].source {
-            chain.push(self.node(source, &status)?);
+        let mut next = Some(self.slot(id)?);
+        let mut chain = vec![];
+        while let Some(slot) = next {
+            chain.push(self.node(slot, &status));
+            next = self.record(slot).source;
         }
         Some(chain)
     }
 
-    fn node(&self, id: AlleleId, status: impl Fn(usize) -> AlleleStatus) -> Option<AlleleNode> {
-        let record = (*self.records.get(id.index())?)?;
-        Some(AlleleNode {
-            id,
+    fn node(&self, slot: Slot, status: impl Fn(Slot) -> AlleleStatus) -> AlleleNode {
+        let record = self.record(slot);
+        AlleleNode {
+            id: self.id(slot),
             allele: record.allele,
-            source: record.source,
+            source: record.source.map(|source| self.id(source)),
             origin: record.origin,
-            status: status(id.index()),
-        })
+            status: status(slot),
+        }
     }
 }
