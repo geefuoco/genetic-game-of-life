@@ -1,4 +1,5 @@
 use crate::rng::Rng;
+use crate::rule::Rule;
 use std::fmt;
 
 /// Smallest allowed World width or height.
@@ -34,7 +35,7 @@ impl fmt::Display for WorldError {
 
 impl std::error::Error for WorldError {}
 
-/// A fixed-size torus of Cells running Conway's Life (B3/S23).
+/// A fixed-size torus of Cells running a Rule, Conway's Life (B3/S23) by default.
 ///
 /// Cells are processed in row-major order. The seeded PRNG is part of the
 /// World's state.
@@ -44,6 +45,7 @@ pub struct World {
     height: usize,
     cells: Vec<bool>,
     generation: u64,
+    rule: Rule,
     rng: Rng,
 }
 
@@ -63,6 +65,7 @@ impl World {
             height,
             cells,
             generation: 0,
+            rule: Rule::default(),
             rng,
         })
     }
@@ -87,6 +90,7 @@ impl World {
             height,
             cells,
             generation: 0,
+            rule: Rule::default(),
             rng: Rng::new(seed),
         })
     }
@@ -98,8 +102,7 @@ impl World {
             for x in 0..self.width {
                 let neighbours = self.live_neighbours(x, y);
                 let alive = self.cells[y * self.width + x];
-                next[y * self.width + x] =
-                    matches!((alive, neighbours), (true, 2 | 3) | (false, 3));
+                next[y * self.width + x] = self.rule.next_state(alive, neighbours);
             }
         }
         self.cells = next;
@@ -111,6 +114,17 @@ impl World {
         for _ in 0..generations {
             self.step();
         }
+    }
+
+    /// The Rule applied by [`World::step`].
+    pub fn rule(&self) -> Rule {
+        self.rule
+    }
+
+    /// Changes the Rule; Cells and Generation are kept and later Generations
+    /// follow the new Rule.
+    pub fn set_rule(&mut self, rule: Rule) {
+        self.rule = rule;
     }
 
     /// Number of Generations applied since creation.
