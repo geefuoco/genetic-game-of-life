@@ -49,3 +49,41 @@ fn invalid_world_size_fails_with_a_message() {
     assert!(!output.status.success());
     assert!(!output.stderr.is_empty());
 }
+
+#[test]
+fn stats_include_the_census() {
+    let json = stats(&[
+        "--seed",
+        "7",
+        "--width",
+        "16",
+        "--height",
+        "16",
+        "--density",
+        "1.0",
+        "--alleles",
+        "3",
+        "--generations",
+        "2",
+    ]);
+    let census = &json["census"];
+    assert_eq!(census["generation"], 2);
+    assert_eq!(census["population"], json["population"]);
+    assert_eq!(census["population_history"].as_array().unwrap().len(), 3);
+    assert_eq!(census["population_history"][0], 256);
+    let copies: u64 = census["alleles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["copies"].as_u64().unwrap())
+        .sum();
+    assert_eq!(copies, 2 * json["population"].as_u64().unwrap());
+    assert!(census["fully_hidden"].is_array());
+}
+
+#[test]
+fn invalid_founding_allele_count_fails_with_a_message() {
+    let output = run(&["--seed", "1", "--alleles", "0"]);
+    assert!(!output.status.success());
+    assert!(!output.stderr.is_empty());
+}
