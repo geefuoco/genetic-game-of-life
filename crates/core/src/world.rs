@@ -1,7 +1,8 @@
+use crate::allele_tree::{AlleleId, AlleleNode, AlleleStatus, AlleleTree, Slot};
 use crate::genetics::{
-    phenotype, shows, wrap, Allele, AlleleCensus, AlleleId, Census, Genotype, DEAD_PHENOTYPE,
-    MAX_DOMINANCE,
+    phenotype, shows, wrap, Allele, AlleleCensus, Census, Genotype, DEAD_PHENOTYPE, MAX_DOMINANCE,
 };
+use crate::mutation::MutationSettings;
 use crate::rng::Rng;
 use crate::rule::Rule;
 use std::fmt;
@@ -68,10 +69,11 @@ pub struct World {
     width: usize,
     height: usize,
     cells: Vec<Option<Genotype>>,
-    alleles: Vec<Allele>,
+    tree: AlleleTree,
     population_history: Vec<usize>,
     generation: u64,
     rule: Rule,
+    mutation: MutationSettings,
     rng: Rng,
 }
 
@@ -121,11 +123,11 @@ impl World {
                 alive.then(|| {
                     let a = pick(&mut rng, founding_alleles);
                     let b = pick(&mut rng, founding_alleles);
-                    [a as AlleleId, b as AlleleId]
+                    [Slot::at(a), Slot::at(b)]
                 })
             })
             .collect();
-        Ok(Self::assemble(width, height, cells, alleles, rng))
+        Ok(Self::assemble(width, height, cells, &alleles, rng))
     }
 
     /// Creates a World with exactly the given `(x, y)` Cells live, each
@@ -155,7 +157,7 @@ impl World {
         live: &[(usize, usize, usize, usize)],
     ) -> Result<Self, WorldError> {
         check_size(width, height)?;
-        if alleles.len() > AlleleId::MAX as usize {
+        if alleles.len() > u32::MAX as usize {
             return Err(WorldError::FoundingAllelesOutOfRange(alleles.len()));
         }
         for &allele in alleles {
@@ -171,13 +173,13 @@ impl World {
             if let Some(&id) = [a, b].iter().find(|&&id| id >= alleles.len()) {
                 return Err(WorldError::UnknownAllele(id));
             }
-            cells[y * width + x] = Some([a as AlleleId, b as AlleleId]);
+            cells[y * width + x] = Some([Slot::at(a), Slot::at(b)]);
         }
         Ok(Self::assemble(
             width,
             height,
             cells,
-            alleles.to_vec(),
+            alleles,
             Rng::new(seed),
         ))
     }
@@ -186,7 +188,7 @@ impl World {
         width: usize,
         height: usize,
         cells: Vec<Option<Genotype>>,
-        alleles: Vec<Allele>,
+        founding: &[Allele],
         rng: Rng,
     ) -> Self {
         let population = cells.iter().flatten().count();
@@ -194,31 +196,45 @@ impl World {
             width,
             height,
             cells,
-            alleles,
+            tree: AlleleTree::founded(founding),
             population_history: vec![population],
             generation: 0,
             rule: Rule::default(),
+            mutation: MutationSettings::default(),
             rng,
         }
     }
 
-    /// Applies the Rule once to every Cell simultaneously.
+    /// Applies the Rule once to every Cell simultaneously, then prunes the
+    /// Allele Tree.
     ///
     /// A Birth with two or more live Neighbours draws, in order: the first
     /// Parent, the second (distinct) Parent, the first Parent's Allele, the
-    /// second Parent's Allele. Births with fewer Parents (B0 and B1 Rules) are
-    /// unspecified: they draw nothing and copy the lone Parent, or take the
-    /// first Allele twice when there is none.
+    /// second Parent's Allele, then the Mutation draws for the first and then
+    /// the second Allele passed on. Births with fewer Parents (B0 and B1
+    /// Rules) are unspecified: they draw nothing and copy the lone Parent, or
+    /// take the first Founding Allele twice when there is none.
+    ///
+    /// Each Mutation draw decides whether the Allele mutates; a mutant then
+    /// draws its hue shift and then its Dominance Level.
     pub fn step(&mut self) {
         let mut next = vec![None; self.cells.len()];
         for y in 0..self.height {
             for x in 0..self.width {
-                let (parents, count) = self.neighbour_genotypes(x, y);
                 let current = self.cells[y * self.width + x];
+                let neighbours = self.neighbour_indices(x, y);
+                let count = neighbours
+                    .iter()
+                    .filter(|&&i| self.cells[i].is_some())
+                    .count();
                 if self.rule.next_state(current.is_some(), count) {
                     next[y * self.width + x] = Some(match current {
                         Some(genotype) => genotype,
-                        None => self.birth(&parents[..count]),
+                        None => {
+                            let parents: Vec<Genotype> =
+                                neighbours.iter().filter_map(|&i| self.cells[i]).collect();
+                            self.birth(&parents)
+                        }
                     });
                 }
             }
@@ -226,11 +242,13 @@ impl World {
         self.cells = next;
         self.generation += 1;
         self.population_history.push(self.population());
+        self.tree
+            .prune(self.cells.iter().flatten().flatten().copied());
     }
 
     fn birth(&mut self, parents: &[Genotype]) -> Genotype {
         match parents {
-            [] => [0, 0],
+            [] => [Slot::FIRST_FOUNDING; 2],
             [only] => *only,
             _ => {
                 let first = pick(&mut self.rng, parents.len());
@@ -240,9 +258,24 @@ impl World {
                 }
                 let from_first = parents[first][pick(&mut self.rng, 2)];
                 let from_second = parents[second][pick(&mut self.rng, 2)];
-                [from_first, from_second]
+                [self.pass_on(from_first), self.pass_on(from_second)]
             }
         }
+    }
+
+    /// The Allele in `slot` as it reaches the child: unchanged, or with
+    /// probability of the Mutation rate a new mutant of it.
+    fn pass_on(&mut self, slot: Slot) -> Slot {
+        if self.rng.next_f64() >= self.mutation.rate() {
+            return slot;
+        }
+        let source = self.tree.allele(slot);
+        let shift = (self.rng.next_f64() * 2.0 - 1.0) * self.mutation.magnitude();
+        let mutant = Allele {
+            hue: wrap(source.hue + shift),
+            dominance: pick(&mut self.rng, MAX_DOMINANCE as usize + 1) as u8,
+        };
+        self.tree.add_mutant(slot, mutant, self.generation + 1)
     }
 
     /// Applies the Rule `generations` times.
@@ -261,6 +294,16 @@ impl World {
     /// follow the new Rule.
     pub fn set_rule(&mut self, rule: Rule) {
         self.rule = rule;
+    }
+
+    /// How Alleles mutate as they are passed on at a Birth.
+    pub fn mutation(&self) -> MutationSettings {
+        self.mutation
+    }
+
+    /// Changes the Mutation settings; later Births use the new settings.
+    pub fn set_mutation(&mut self, mutation: MutationSettings) {
+        self.mutation = mutation;
     }
 
     /// Number of Generations applied since creation.
@@ -298,29 +341,36 @@ impl World {
         &self.rng
     }
 
-    /// Genotypes of the live Neighbours of `(x, y)` in a fixed scan order.
-    fn neighbour_genotypes(&self, x: usize, y: usize) -> ([Genotype; 8], usize) {
-        let mut found = [[0; 2]; 8];
-        let mut count = 0;
-        for dy in [self.height - 1, 0, 1] {
-            for dx in [self.width - 1, 0, 1] {
-                if dx == 0 && dy == 0 {
-                    continue;
-                }
-                let nx = (x + dx) % self.width;
-                let ny = (y + dy) % self.height;
-                if let Some(genotype) = self.cells[ny * self.width + nx] {
-                    found[count] = genotype;
-                    count += 1;
-                }
-            }
-        }
-        (found, count)
+    /// Cell indices of the Neighbours of `(x, y)` in a fixed scan order.
+    fn neighbour_indices(&self, x: usize, y: usize) -> [usize; 8] {
+        let (w, h) = (self.width, self.height);
+        let (left, right) = ((x + w - 1) % w, (x + 1) % w);
+        let (up, down) = ((y + h - 1) % h * w, (y + 1) % h * w);
+        let row = y * w;
+        [
+            up + left,
+            up + x,
+            up + right,
+            row + left,
+            row + right,
+            down + left,
+            down + x,
+            down + right,
+        ]
     }
 
-    /// The World's Alleles, indexed by the ids used in Genotypes.
-    pub fn alleles(&self) -> &[Allele] {
-        &self.alleles
+    /// The Allele Tree: every retained Allele, each listed before its
+    /// descendants.
+    pub fn allele_tree(&self) -> Vec<AlleleNode> {
+        let tally = self.tally();
+        self.tree.nodes(|slot| tally[slot.index()].status())
+    }
+
+    /// The chain from `id` back to its Founding Allele, starting with `id`;
+    /// `None` if the World retains no Allele `id`.
+    pub fn lineage(&self, id: AlleleId) -> Option<Vec<AlleleNode>> {
+        let tally = self.tally();
+        self.tree.lineage(id, |slot| tally[slot.index()].status())
     }
 
     /// One Phenotype hue per Cell in row-major order; dead Cells are
@@ -329,7 +379,7 @@ impl World {
         self.cells
             .iter()
             .map(|cell| match cell {
-                Some([a, b]) => phenotype(self.alleles[*a as usize], self.alleles[*b as usize]),
+                Some([a, b]) => phenotype(self.tree.allele(*a), self.tree.allele(*b)),
                 None => DEAD_PHENOTYPE,
             })
             .collect()
@@ -337,33 +387,20 @@ impl World {
 
     /// The genetic state of the World.
     pub fn census(&self) -> Census {
-        let mut counts = vec![(0, 0, 0); self.alleles.len()];
-        for &[a, b] in self.cells.iter().flatten() {
-            let (shows_a, shows_b) = shows(self.alleles[a as usize], self.alleles[b as usize]);
-            counts[a as usize].0 += 1;
-            counts[b as usize].0 += 1;
-            if a == b {
-                counts[a as usize].1 += 1;
-                continue;
-            }
-            for (id, shown) in [(a, shows_a), (b, shows_b)] {
-                if shown {
-                    counts[id as usize].1 += 1;
-                } else {
-                    counts[id as usize].2 += 1;
-                }
-            }
-        }
         let alleles: Vec<AlleleCensus> = self
-            .alleles
-            .iter()
-            .zip(counts)
-            .filter(|(_, (copies, _, _))| *copies > 0)
-            .map(|(&allele, (copies, shown, hidden))| AlleleCensus {
-                allele,
-                copies,
-                shown,
-                hidden,
+            .tally()
+            .into_iter()
+            .enumerate()
+            .filter(|(_, tally)| tally.copies > 0)
+            .map(|(index, tally)| {
+                let slot = Slot::at(index);
+                AlleleCensus {
+                    id: self.tree.id(slot),
+                    allele: self.tree.allele(slot),
+                    copies: tally.copies,
+                    shown: tally.shown,
+                    hidden: tally.hidden,
+                }
             })
             .collect();
         Census {
@@ -376,6 +413,47 @@ impl World {
                 .collect(),
             alleles,
             population_history: self.population_history.clone(),
+        }
+    }
+
+    /// Copies, showing Cells and hiding Cells per Allele slot index.
+    fn tally(&self) -> Vec<Tally> {
+        let mut tally = vec![Tally::default(); self.tree.slot_bound()];
+        for &[a, b] in self.cells.iter().flatten() {
+            let (shows_a, shows_b) = shows(self.tree.allele(a), self.tree.allele(b));
+            tally[a.index()].copies += 1;
+            tally[b.index()].copies += 1;
+            if a == b {
+                tally[a.index()].shown += 1;
+                continue;
+            }
+            for (id, shown) in [(a, shows_a), (b, shows_b)] {
+                if shown {
+                    tally[id.index()].shown += 1;
+                } else {
+                    tally[id.index()].hidden += 1;
+                }
+            }
+        }
+        tally
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct Tally {
+    copies: usize,
+    shown: usize,
+    hidden: usize,
+}
+
+impl Tally {
+    fn status(&self) -> AlleleStatus {
+        if self.copies == 0 {
+            AlleleStatus::Extinct
+        } else if self.shown > 0 {
+            AlleleStatus::Living
+        } else {
+            AlleleStatus::Hidden
         }
     }
 }

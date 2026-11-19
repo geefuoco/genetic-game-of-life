@@ -2,12 +2,12 @@
 //! several standard errors wide for the sample sizes used, so they hold for
 //! any correct implementation but fail on a biased one.
 
-use genetic_life_core::{Allele, World, DEAD_PHENOTYPE};
+use genetic_life_core::{Allele, MutationSettings, World, DEAD_PHENOTYPE};
 
 const SIZE: usize = 200;
 
 /// A deterministic scatter of live Cells (about 30%), every one typed
-/// `genotype`.
+/// `genotype`, with Mutation off.
 fn uniform_world(alleles: &[Allele], genotype: (usize, usize), seed: u64) -> World {
     let mut state = seed ^ 0x1234_5678_9ABC_DEF0;
     let mut live = vec![];
@@ -21,7 +21,9 @@ fn uniform_world(alleles: &[Allele], genotype: (usize, usize), seed: u64) -> Wor
             }
         }
     }
-    World::from_genotypes(SIZE, SIZE, seed, alleles, &live).unwrap()
+    let mut world = World::from_genotypes(SIZE, SIZE, seed, alleles, &live).unwrap();
+    world.set_mutation(MutationSettings::new(0.0, 0.0).unwrap());
+    world
 }
 
 /// Phenotypes of Cells born in the first Generation.
