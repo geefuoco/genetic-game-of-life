@@ -1,0 +1,40 @@
+{
+  "name": "genetic-life-web",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Browser front end for the genetic game of life",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "wasm": "cargo build --release --target wasm32-unknown-unknown -p genetic-life-wasm && wasm-bindgen --target web --out-dir wasm-pkg ../target/wasm32-unknown-unknown/release/genetic_life_wasm.wasm",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint . && stylelint \"**/*.{css,svelte}\"",
+    "check": "svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
+    "test": "vitest run",
+    "e2e": "playwright test"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "^5.3.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.65.1",
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@types/node": "^26.6.6",
+    "eslint": "^10.15.0",
+    "eslint-plugin-svelte": "^3.24.1",
+    "globals": "^17.14.0",
+    "jiti": "^2.7.0",
+    "postcss-html": "^2.0.1",
+    "stylelint": "^18.0.0",
+    "svelte": "^5.58.0",
+    "svelte-check": "^4.7.8",
+    "svelte-eslint-parser": "^1.10.1",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.73.0",
+    "vite": "^8.3.8",
+    "vitest": "^5.1.1"
+  }
+}
