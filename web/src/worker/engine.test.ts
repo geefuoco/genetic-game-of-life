@@ -2,13 +2,25 @@ import { readFileSync } from 'node:fs';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { initSync, WebWorld } from '../../wasm-pkg/genetic_life_wasm.js';
 import type { Command, Frame, Rate, SoupSettings, WorkerEvent } from '../protocol.ts';
+import { RULE_PRESETS } from '../lib/settings.ts';
 import { Engine, type Clock, type EngineWorld } from './engine.ts';
 
 beforeAll(() => {
   initSync({ module: readFileSync(new URL('../../wasm-pkg/genetic_life_wasm_bg.wasm', import.meta.url)) });
 });
 
-const SOUP: SoupSettings = { seed: 42n, width: 160, height: 160, density: 0.3, foundingAlleles: 8 };
+const SOUP: SoupSettings = { seed: 42n, rule: 'B3/S23', width: 160, height: 160, density: 0.3, foundingAlleles: 8, mutation: { rate: 0.01, magnitude: 30 } };
+
+/** Life without Death: every live Cell survives, so the population never falls. */
+const LIFE_WITHOUT_DEATH = 'B3/S012345678';
+
+function createWebWorld(soup: SoupSettings): WebWorld {
+  return new WebWorld(soup.seed, soup.width, soup.height, soup.density, soup.foundingAlleles);
+}
+
+function isNonDecreasing(values: number[]): boolean {
+  return values.every((value, i) => i === 0 || value >= (values[i - 1] ?? value));
+}
 
 /** A clock whose time only moves when the test, or a costly World, moves it. */
 class FakeClock implements Clock {
@@ -50,6 +62,8 @@ interface Harness {
   clock: FakeClock;
   frames: Frame[];
   errors: string[];
+  /** Events other than frames and errors, in order. */
+  notices: Exclude<WorkerEvent, Frame | { type: 'error' }>[];
   send(command: Command): void;
   /** Hands every held buffer back, as a page that keeps up would. */
   releaseAll(): void;
@@ -63,10 +77,11 @@ function harness(options: { keepUp?: boolean } = {}): Harness {
   const clock = new FakeClock();
   const frames: Frame[] = [];
   const errors: string[] = [];
+  const notices: Harness['notices'] = [];
   const held: Float32Array[] = [];
   const cost = { msPerGeneration: 0 };
   const createWorld = (soup: SoupSettings): EngineWorld => {
-    const world = new WebWorld(soup.seed, soup.width, soup.height, soup.density, soup.foundingAlleles);
+    const world = createWebWorld(soup);
     return {
       step(generations) {
         world.step(generations);
@@ -75,12 +90,18 @@ function harness(options: { keepUp?: boolean } = {}): Harness {
       generation: () => world.generation(),
       population: () => world.population(),
       phenotypes: (out) => world.phenotypes(out),
+      setRule: (rule) => world.setRule(rule),
+      setMutation: (rate, magnitude) => world.setMutation(rate, magnitude),
       free: () => world.free(),
     };
   };
   const onEvent = (event: WorkerEvent): void => {
     if (event.type === 'error') {
       errors.push(event.message);
+      return;
+    }
+    if (event.type !== 'frame') {
+      notices.push(event);
       return;
     }
     frames.push({ ...event, phenotypes: event.phenotypes.slice() });
@@ -100,6 +121,7 @@ function harness(options: { keepUp?: boolean } = {}): Harness {
     clock,
     frames,
     errors,
+    notices,
     cost,
     send: (command) => engine.handle(command),
     releaseAll() {
@@ -118,7 +140,9 @@ function start(h: Harness, rate: Rate = 15, running = true, soup = SOUP): void {
 }
 
 function referencePhenotypes(soup: SoupSettings, generations: number): Float32Array {
-  const world = new WebWorld(soup.seed, soup.width, soup.height, soup.density, soup.foundingAlleles);
+  const world = createWebWorld(soup);
+  world.setRule(soup.rule);
+  world.setMutation(soup.mutation.rate, soup.mutation.magnitude);
   world.step(generations);
   const out = new Float32Array(soup.width * soup.height);
   world.phenotypes(out);
@@ -144,6 +168,13 @@ describe('starting', () => {
     start(h, 15, true, { ...SOUP, width: 8 });
     expect(h.frames).toHaveLength(0);
     expect(h.errors[0]).toMatch(/size 8x160/);
+  });
+
+  it('reports a Soup whose Rule the core rejects as an error', () => {
+    const h = harness();
+    start(h, 15, true, { ...SOUP, rule: 'B9/S23' });
+    expect(h.frames).toHaveLength(0);
+    expect(h.errors).toEqual(['neighbour count 9 is too large, the maximum is 8']);
   });
 
   it('replaces the running World when started again', () => {
@@ -275,5 +306,62 @@ describe('frames', () => {
       [64, 0],
       [64, 1],
     ]);
+  });
+});
+
+describe('the Rule', () => {
+  it('changes mid-run without resetting the World', () => {
+    const h = harness();
+    start(h);
+    h.clock.advance(1000);
+    h.send({ type: 'set-rule', rule: LIFE_WITHOUT_DEATH });
+    const switched = h.frames.length;
+    h.clock.advance(1000);
+    expect(h.latest().generation).toBe(30);
+    expect(isNonDecreasing(h.frames.slice(switched - 1).map((frame) => frame.population))).toBe(true);
+  });
+
+  it('confirms the new Rule in canonical notation', () => {
+    const h = harness();
+    start(h);
+    h.send({ type: 'set-rule', rule: 'b63/s32' });
+    expect(h.notices).toEqual([{ type: 'rule', rule: 'B36/S23' }]);
+  });
+
+  it('accepts every Rule Preset the settings offer, as written', () => {
+    const h = harness();
+    start(h);
+    for (const preset of RULE_PRESETS) h.send({ type: 'set-rule', rule: preset.notation });
+    expect(h.notices).toEqual(RULE_PRESETS.map((preset) => ({ type: 'rule', rule: preset.notation })));
+  });
+
+  it('rejects invalid B/S notation with the core explanation and keeps the running Rule', () => {
+    const h = harness();
+    start(h, 15, true, { ...SOUP, rule: LIFE_WITHOUT_DEATH });
+    h.send({ type: 'set-rule', rule: 'B3/S2x' });
+    const rejected = h.frames.length;
+    h.clock.advance(1000);
+    expect(h.notices).toEqual([{ type: 'rule-rejected', rule: 'B3/S2x', message: "'x' is not a digit from 0 to 8" }]);
+    expect(h.errors).toEqual([]);
+    expect(h.latest().generation).toBe(15);
+    expect(isNonDecreasing(h.frames.slice(rejected - 1).map((frame) => frame.population))).toBe(true);
+  });
+});
+
+describe('Mutation', () => {
+  /** Phenotypes 8 Founding Alleles can make without Mutation: each Allele alone, or any two blended. */
+  const WITHOUT_MUTATION = 8 + (8 * 7) / 2;
+
+  const distinctLiveHues = (frame: Frame): number => new Set(frame.phenotypes.filter((hue) => hue >= 0)).size;
+
+  it('changes mid-run', () => {
+    const h = harness();
+    start(h, 15, true, { ...SOUP, mutation: { rate: 0, magnitude: 30 } });
+    h.clock.advance(1000);
+    expect(distinctLiveHues(h.latest())).toBeLessThanOrEqual(WITHOUT_MUTATION);
+    h.send({ type: 'set-mutation', mutation: { rate: 1, magnitude: 180 } });
+    h.clock.advance(1000);
+    expect(h.latest().generation).toBe(30);
+    expect(distinctLiveHues(h.latest())).toBeGreaterThan(WITHOUT_MUTATION);
   });
 });

@@ -6,6 +6,10 @@ export interface EngineWorld {
   generation(): number;
   population(): number;
   phenotypes(out: Float32Array): void;
+  /** Switches to a Rule in B/S notation and returns it in canonical notation; throws the core's explanation if it is invalid. */
+  setRule(rule: string): string;
+  /** Switches the Mutation settings; throws the core's explanation if they are out of range. */
+  setMutation(rate: number, magnitude: number): void;
   free(): void;
 }
 
@@ -17,6 +21,7 @@ export interface Clock {
 }
 
 export interface EngineOptions {
+  /** The World a Soup describes; the engine applies its Rule and Mutation settings after creating it. */
   createWorld(soup: SoupSettings): EngineWorld;
   clock: Clock;
   send(event: WorkerEvent, transfer: Transferable[]): void;
@@ -79,6 +84,12 @@ export class Engine {
         this.rate = command.rate;
         if (this.running) this.restartPace();
         break;
+      case 'set-rule':
+        this.setRule(command.rule);
+        break;
+      case 'set-mutation':
+        this.world?.setMutation(command.mutation.rate, command.mutation.magnitude);
+        break;
       case 'release':
         if (command.phenotypes.length === this.cells) {
           this.free.push(command.phenotypes);
@@ -95,12 +106,17 @@ export class Engine {
     this.cells = 0;
     this.free = [];
     this.framePending = false;
+    let world: EngineWorld | null = null;
     try {
-      this.world = this.options.createWorld(soup);
+      world = this.options.createWorld(soup);
+      world.setRule(soup.rule);
+      world.setMutation(soup.mutation.rate, soup.mutation.magnitude);
     } catch (error) {
-      this.options.send({ type: 'error', message: error instanceof Error ? error.message : String(error) }, []);
+      world?.free();
+      this.options.send({ type: 'error', message: messageOf(error) }, []);
       return;
     }
+    this.world = world;
     this.width = soup.width;
     this.height = soup.height;
     this.cells = soup.width * soup.height;
@@ -111,6 +127,18 @@ export class Engine {
       this.running = true;
       this.restartPace();
     }
+  }
+
+  private setRule(rule: string): void {
+    if (!this.world) return;
+    let running: string;
+    try {
+      running = this.world.setRule(rule);
+    } catch (error) {
+      this.options.send({ type: 'rule-rejected', rule, message: messageOf(error) }, []);
+      return;
+    }
+    this.options.send({ type: 'rule', rule: running }, []);
   }
 
   private pause(): void {
@@ -192,4 +220,8 @@ export class Engine {
       [buffer.buffer],
     );
   }
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
