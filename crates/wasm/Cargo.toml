@@ -8,7 +8,7 @@ repository.workspace = true
 publish = false
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib"]
 
 [lints]
 workspace = true

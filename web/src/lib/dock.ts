@@ -10,6 +10,15 @@ const KEY = 'genetic-life:dock';
 const DOCKED = 'side';
 const FLOATING = 'floating';
 
+/** The page's local storage, or `null` where the browser blocks it. */
+export function browserStorage(): DockStorage | null {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
 /** Whether the dock was last docked to the side; floating when unknown or storage is unavailable. */
 export function loadDocked(storage: DockStorage | null): boolean {
   try {

@@ -44,6 +44,7 @@ precision highp sampler2D;
 
 uniform sampler2D u_cells;
 uniform sampler2D u_palette;
+uniform float u_paletteSize;
 uniform vec2 u_world;
 uniform float u_scale;
 uniform vec2 u_origin;
@@ -84,24 +85,28 @@ void main() {
     float edge = length(max(offset, 0.0)) + min(max(offset.x, offset.y), 0.0) - u_radius;
     coverage = clamp(0.5 - edge, 0.0, 1.0);
   }
-  vec3 shade = texture(u_palette, vec2(hue / 360.0, 0.5)).rgb;
+  vec3 shade = texture(u_palette, vec2(hue / 360.0 + 0.5 / u_paletteSize, 0.5)).rgb;
   colour = vec4(mix(u_background, shade, coverage * alpha), 1.0);
 }
 `;
 
-type Uniform =
-  | 'u_cells'
-  | 'u_palette'
-  | 'u_world'
-  | 'u_scale'
-  | 'u_origin'
-  | 'u_window'
-  | 'u_fadeAxes'
-  | 'u_fade'
-  | 'u_gap'
-  | 'u_radius'
-  | 'u_canvasHeight'
-  | 'u_background';
+const UNIFORMS = [
+  'u_cells',
+  'u_palette',
+  'u_paletteSize',
+  'u_world',
+  'u_scale',
+  'u_origin',
+  'u_window',
+  'u_fadeAxes',
+  'u_fade',
+  'u_gap',
+  'u_radius',
+  'u_canvasHeight',
+  'u_background',
+] as const;
+
+type Uniform = (typeof UNIFORMS)[number];
 
 /**
  * Draws the World with WebGL2: one copy of the torus inside a window whose
@@ -115,10 +120,16 @@ export class Renderer {
   private readonly cells: WebGLTexture;
   private world: Size = { width: 0, height: 0 };
 
-  /** A renderer for `canvas`, or `null` where WebGL2 is unavailable. */
+  /** A renderer for `canvas`, or `null` where WebGL2 is unavailable or cannot run the shaders. */
   static create(canvas: HTMLCanvasElement): Renderer | null {
     const gl = canvas.getContext('webgl2', { antialias: false, alpha: false });
-    return gl ? new Renderer(canvas, gl) : null;
+    if (!gl) return null;
+    try {
+      return new Renderer(canvas, gl);
+    } catch (error) {
+      console.error(error);
+      return null;
+    }
   }
 
   private constructor(canvas: HTMLCanvasElement, gl: WebGL2RenderingContext) {
@@ -127,21 +138,7 @@ export class Renderer {
     const program = link(gl, compile(gl, gl.VERTEX_SHADER, VERTEX), compile(gl, gl.FRAGMENT_SHADER, FRAGMENT));
     gl.useProgram(program);
     gl.bindVertexArray(gl.createVertexArray());
-    const names: Uniform[] = [
-      'u_cells',
-      'u_palette',
-      'u_world',
-      'u_scale',
-      'u_origin',
-      'u_window',
-      'u_fadeAxes',
-      'u_fade',
-      'u_gap',
-      'u_radius',
-      'u_canvasHeight',
-      'u_background',
-    ];
-    this.uniforms = Object.fromEntries(names.map((name) => [name, gl.getUniformLocation(program, name)])) as Record<
+    this.uniforms = Object.fromEntries(UNIFORMS.map((name) => [name, gl.getUniformLocation(program, name)])) as Record<
       Uniform,
       WebGLUniformLocation | null
     >;
@@ -150,6 +147,7 @@ export class Renderer {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, PALETTE_SIZE, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, paletteTable(PALETTE_SIZE));
     gl.uniform1i(this.uniforms.u_cells, 0);
     gl.uniform1i(this.uniforms.u_palette, 1);
+    gl.uniform1f(this.uniforms.u_paletteSize, PALETTE_SIZE);
     gl.uniform3f(this.uniforms.u_background, ...BACKGROUND);
   }
 

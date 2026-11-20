@@ -23,12 +23,18 @@ describe('maxChroma', () => {
 });
 
 describe('Natural lightness palette', () => {
+  const lightnesses = Array.from({ length: 360 }, (_, hue) => ({ hue, l: paletteColour(hue).l }));
+
   it('makes yellow the lightest hue', () => {
-    expect(paletteColour(105).l).toBeCloseTo(0.86, 6);
+    const lightest = lightnesses.reduce((a, b) => (b.l > a.l ? b : a));
+    expect(lightest.hue).toBe(105);
+    expect(lightest.l).toBeCloseTo(0.86, 6);
   });
 
   it('makes blue-violet the darkest hue', () => {
-    expect(paletteColour(285).l).toBeCloseTo(0.64, 6);
+    const darkest = lightnesses.reduce((a, b) => (b.l < a.l ? b : a));
+    expect(darkest.hue).toBe(285);
+    expect(darkest.l).toBeCloseTo(0.64, 6);
   });
 
   it('caps chroma at 0.25 where the gamut allows more', () => {

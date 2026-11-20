@@ -6,7 +6,7 @@ const send = (event: WorkerEvent, transfer: Transferable[]): void => {
   self.postMessage(event, { transfer });
 };
 
-const engine = init().then(
+const engineReady = init().then(
   () =>
     new Engine({
       createWorld: (soup) => new WebWorld(soup.seed, soup.width, soup.height, soup.density, soup.foundingAlleles),
@@ -19,10 +19,10 @@ const engine = init().then(
     }),
 );
 
-engine.catch((error: unknown) => {
+engineReady.catch((error: unknown) => {
   send({ type: 'error', message: `The simulation could not load: ${String(error)}` }, []);
 });
 
 self.onmessage = (event: MessageEvent<Command>) => {
-  void engine.then((running) => running.handle(event.data));
+  void engineReady.then((engine) => engine.handle(event.data));
 };

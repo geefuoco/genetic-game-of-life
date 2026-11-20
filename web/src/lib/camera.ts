@@ -51,13 +51,14 @@ function clampScale(scale: number, world: Size, viewport: Size): number {
   return Math.min(MAX_SCALE, Math.max(minScale(world, viewport), scale));
 }
 
+/** `value` wrapped into `0..modulus`. */
+function wrap(value: number, modulus: number): number {
+  return ((value % modulus) + modulus) % modulus;
+}
+
 /** Brings the offsets back within one World, which leaves the view unchanged. */
 function wrapped(scale: number, x: number, y: number, world: Size): Camera {
-  const span = (offset: number, cells: number): number => {
-    const length = cells * scale;
-    return ((offset % length) + length) % length;
-  };
-  return { scale, x: span(x, world.width), y: span(y, world.height) };
+  return { scale, x: wrap(x, world.width * scale), y: wrap(y, world.height * scale) };
 }
 
 /** The view the page opens on: the World centred at the opening zoom. */
@@ -96,7 +97,6 @@ export function resizeViewport(camera: Camera, world: Size, from: Size, to: Size
 
 /** The fractional Cell coordinates under a viewport point, wrapped into the World. */
 export function screenToCell(camera: Camera, world: Size, point: Point): Point {
-  const wrap = (value: number, cells: number): number => ((value % cells) + cells) % cells;
   return {
     x: wrap((point.x - camera.x) / camera.scale, world.width),
     y: wrap((point.y - camera.y) / camera.scale, world.height),

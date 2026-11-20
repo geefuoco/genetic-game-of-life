@@ -130,7 +130,7 @@ Friendlier words the app may show players in place of glossary terms. Code, docs
 
 | UI copy | Glossary term |
 | --- | --- |
-| colour gene | Allele (of the Pigment Gene) |
+| colour gene | Allele; UI copy only, so the Pigment's "Color gene" avoid still holds in code and docs |
 | a colour name, such as "orange" | an Allele or Phenotype whose hue falls in that colour's range |
 | colour | Phenotype |
 | gen | Generation |

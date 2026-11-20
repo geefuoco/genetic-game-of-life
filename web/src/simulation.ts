@@ -21,14 +21,10 @@ export class Simulation {
     };
   }
 
+  /** Sends a command, transferring the buffer of a `release`. */
   send(command: Command): void {
     if (command.type === 'release') this.worker.postMessage(command, [command.phenotypes.buffer]);
     else this.worker.postMessage(command);
-  }
-
-  /** Hands a drawn frame's buffer back to the worker to fill again. */
-  release(phenotypes: Float32Array): void {
-    this.send({ type: 'release', phenotypes });
   }
 
   dispose(): void {

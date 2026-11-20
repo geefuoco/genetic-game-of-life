@@ -2,8 +2,8 @@
   import { onMount, tick } from 'svelte';
   import Dock from './Dock.svelte';
   import WorldView from './WorldView.svelte';
-  import { loadDocked, saveDocked } from './lib/dock.ts';
-  import { keyAction } from './lib/keys.ts';
+  import { browserStorage, loadDocked, saveDocked } from './lib/dock.ts';
+  import { keyAction, type KeyAction } from './lib/keys.ts';
   import { DEFAULT_SPEED, SPEEDS, cycleSpeed, nudgeSpeed } from './lib/speed.ts';
   import type { Frame, SoupSettings } from './protocol.ts';
   import { Simulation } from './simulation.ts';
@@ -15,15 +15,7 @@
   /** Zoom factor of one press of a zoom button. */
   const ZOOM_STEP = 1.25;
 
-  const storage = (): Storage | null => {
-    try {
-      return window.localStorage;
-    } catch {
-      return null;
-    }
-  };
-
-  let docked = $state(loadDocked(storage()));
+  let docked = $state(loadDocked(browserStorage()));
   let running = $state(true);
   let speed = $state(DEFAULT_SPEED);
   let generation = $state(0);
@@ -60,7 +52,7 @@
 
   async function toggleDock(refocus: boolean): Promise<void> {
     docked = !docked;
-    saveDocked(storage(), docked);
+    saveDocked(browserStorage(), docked);
     if (refocus) {
       await tick();
       dock.focusDockToggle();
@@ -71,8 +63,12 @@
     return target instanceof Element && target.closest('input, textarea, select, [contenteditable]') !== null;
   }
 
+  function actionOf(event: KeyboardEvent): KeyAction | null {
+    return keyAction({ key: event.key, ctrlKey: event.ctrlKey, metaKey: event.metaKey, altKey: event.altKey, editable: isEditable(event.target) });
+  }
+
   function onkeydown(event: KeyboardEvent): void {
-    const action = keyAction({ ...event, key: event.key, ctrlKey: event.ctrlKey, metaKey: event.metaKey, altKey: event.altKey, editable: isEditable(event.target) });
+    const action = actionOf(event);
     if (!action) return;
     event.preventDefault();
     if (event.repeat && (action === 'toggle-play' || action === 'toggle-dock')) return;
@@ -84,9 +80,7 @@
   }
 
   function onkeyup(event: KeyboardEvent): void {
-    if (keyAction({ key: event.key, ctrlKey: event.ctrlKey, metaKey: event.metaKey, altKey: event.altKey, editable: isEditable(event.target) }) === 'toggle-play') {
-      event.preventDefault();
-    }
+    if (actionOf(event) === 'toggle-play') event.preventDefault();
   }
 
   onMount(() => {
@@ -137,7 +131,7 @@
 
 <div class="app" class:docked hidden={problem !== null}>
   <main class="stage">
-    <WorldView bind:this={view} onsupport={(ok) => (supported = ok)} onrelease={(buffer) => simulation?.release(buffer)} />
+    <WorldView bind:this={view} onsupport={(ok) => (supported = ok)} onrelease={(phenotypes) => simulation?.send({ type: 'release', phenotypes })} />
     <div class="vignette"></div>
     <header class="wordmark" aria-hidden={docked}>
       <h1>genetic life</h1>

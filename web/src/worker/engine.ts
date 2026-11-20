@@ -129,7 +129,7 @@ export class Engine {
     this.cancelTimer();
     this.timer = this.options.clock.setTimeout(() => {
       this.timer = null;
-      this.tick();
+      this.runSlice();
     }, ms);
   }
 
@@ -139,7 +139,8 @@ export class Engine {
     this.schedule(0);
   }
 
-  private tick(): void {
+  /** Runs the Generations now due, then schedules the next slice. */
+  private runSlice(): void {
     const world = this.world;
     if (!world || !this.running) return;
     const { clock } = this.options;
