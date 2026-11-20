@@ -1,18 +1,18 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type FrameLocator, type Page } from '@playwright/test';
 
-async function stats(page: Page): Promise<{ generation: number; population: number }> {
-  const text = (await page.getByTestId('stats').textContent()) ?? '';
+async function stats(scope: Page | FrameLocator): Promise<{ generation: number; population: number }> {
+  const text = (await scope.getByTestId('stats').textContent()) ?? '';
   const match = /gen ([\d,]+) · ([\d,]+) alive/.exec(text);
   if (!match) throw new Error(`unexpected stats line: ${text}`);
   const number = (digits: string | undefined): number => Number((digits ?? '').replaceAll(',', ''));
   return { generation: number(match[1]), population: number(match[2]) };
 }
 
-const generation = async (page: Page): Promise<number> => (await stats(page)).generation;
+const generation = async (scope: Page | FrameLocator): Promise<number> => (await stats(scope)).generation;
 
 /** Waits until the World has advanced, so the page is running. */
 async function open(page: Page): Promise<void> {
-  await page.goto('/');
+  await page.goto('./');
   await expect.poll(() => generation(page)).toBeGreaterThan(2);
 }
 
@@ -70,6 +70,18 @@ test('makes no requests to other origins and uses the bundled Inter', async ({ p
     return document.fonts.check('500 15px "Inter Variable"');
   });
   expect(interLoaded).toBe(true);
+});
+
+test('runs without cross-origin isolation', async ({ page }) => {
+  await open(page);
+  expect(await page.evaluate(() => self.crossOriginIsolated)).toBe(false);
+});
+
+test('runs embedded in an iframe of a page on another origin', async ({ page, baseURL }) => {
+  await page.setContent(`<iframe src="${baseURL}" width="1200" height="800"></iframe>`);
+  const frame = page.frameLocator('iframe');
+  await expect.poll(() => generation(frame)).toBeGreaterThan(2);
+  expect((await stats(frame)).population).toBeGreaterThan(0);
 });
 
 test('pauses, steps one Generation at a time, and plays again', async ({ page }) => {
@@ -230,7 +242,7 @@ test('explains when WebGL2 is unavailable', async ({ page }) => {
       return type === 'webgl2' ? null : original.call(this, type, options);
     } as typeof original;
   });
-  await page.goto('/');
+  await page.goto('./');
   await expect(page.getByRole('alert')).toHaveText(/needs WebGL2/);
   await expect(page.getByRole('button', { name: 'Pause' })).toBeHidden();
 });

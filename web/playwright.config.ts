@@ -1,6 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
 
 const PORT = 4173;
+const BASE = '/genetic-game-of-life/';
+const url = `http://localhost:${PORT}${BASE}`;
 const ci = Boolean(process.env.CI);
 
 export default defineConfig({
@@ -9,7 +11,7 @@ export default defineConfig({
   forbidOnly: ci,
   retries: ci ? 1 : 0,
   reporter: ci ? 'github' : 'list',
-  use: { baseURL: `http://localhost:${PORT}` },
+  use: { baseURL: url },
   projects: [
     {
       name: 'chromium',
@@ -21,8 +23,8 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: `npm run preview -- --port ${PORT} --strictPort`,
-    url: `http://localhost:${PORT}`,
+    command: `npm run preview -- --port ${PORT} --strictPort --base ${BASE}`,
+    url,
     reuseExistingServer: !ci,
   },
 });
