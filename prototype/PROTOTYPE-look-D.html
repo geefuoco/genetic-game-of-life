@@ -1,0 +1,898 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PROTOTYPE look D - Open dish</title>
+<!--
+  PROTOTYPE, throwaway. Look direction D for #9: A's dock and open screen, a dock-to-side panel,
+  rounded cells, a hue-over-time Lineage chart, and a clearer cell popup.
+  Variants (?variant=1|2|3) answer one question: how to bound the World without showing tiled copies.
+    1 Feathered window   - exactly one copy, edges fade to dark, panning scrolls the torus inside it
+    2 Frosted surround   - same window, the wrapped continuation shows outside it, blurred and dimmed
+    3 Free camera        - classic wrapped camera, but zoom-out stops before a second copy is visible
+  ?dock=side opens with the toolbar docked as a right-hand panel (toggle with D or the dock button).
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+* { box-sizing: border-box; margin: 0; }
+html, body { height: 100%; overflow: hidden; }
+:root { --bg: #06070a; --glass: rgba(19,21,28,.8); --line: rgba(255,255,255,.07); --text: #e9ebf1; --mute: #8b91a1; --dim: #5f6575; --panel: 340px; }
+body { font: 400 13px/1.4 Inter, system-ui, sans-serif; background: var(--bg); color: var(--text); font-feature-settings: 'tnum'; -webkit-font-smoothing: antialiased; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+input[type=range] { accent-color: #e9ebf1; }
+select { background: #11131a; color: var(--text); border: 1px solid #262a35; border-radius: 8px; padding: 5px 8px; font: inherit; }
+
+#app { position: fixed; inset: 0; display: grid; grid-template-columns: minmax(0, 1fr) 0px; transition: grid-template-columns .34s cubic-bezier(.2,.8,.2,1); }
+#app.docked { grid-template-columns: minmax(0, 1fr) var(--panel); }
+.stage { position: relative; overflow: hidden; background: var(--bg); }
+#world { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
+#world.paint { cursor: crosshair; }
+#world.grabbing { cursor: grabbing; }
+.vig { position: absolute; inset: 0; pointer-events: none; background: radial-gradient(120% 100% at 50% 50%, transparent 58%, rgba(0,0,0,.55)); }
+.glass { background: var(--glass); backdrop-filter: blur(16px) saturate(1.2); -webkit-backdrop-filter: blur(16px) saturate(1.2); border: 1px solid var(--line); box-shadow: 0 12px 40px rgba(0,0,0,.45); }
+
+.mark { position: absolute; top: 22px; left: 26px; pointer-events: none; font-weight: 500; font-size: 15px; letter-spacing: .01em; transition: opacity .2s; }
+.mark small { display: block; font-size: 12px; color: var(--mute); font-weight: 400; margin-top: 2px; }
+#app.docked .mark { opacity: 0; }
+.hint { position: absolute; top: 22px; left: 50%; transform: translateX(-50%); color: var(--mute); font-size: 12px; pointer-events: none; transition: opacity .6s; white-space: nowrap; }
+.hint.gone { opacity: 0; }
+
+.dock { display: flex; align-items: center; gap: 2px; padding: 6px; border-radius: 16px; }
+.stage > .dock { position: absolute; left: 50%; bottom: 64px; transform: translateX(-50%); z-index: 6; }
+.dock button { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; color: #c3c8d4; transition: background .12s, color .12s; }
+.dock button:hover, .dock button.on { background: rgba(255,255,255,.08); color: #fff; }
+.dock .sep { width: 1px; height: 22px; background: rgba(255,255,255,.08); margin: 0 4px; }
+.dock button.speed { width: auto; min-width: 44px; padding: 0 8px; font-size: 13px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.dock .dot { width: 16px; height: 16px; border-radius: 50%; box-shadow: 0 0 0 2px rgba(255,255,255,.22); }
+.dock .br { display: none; }
+.panel .dock { flex-wrap: wrap; background: rgba(255,255,255,.03); box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+.panel .dock .sep, .panel .dock .float-only { display: none; }
+.panel .dock .br { display: block; flex-basis: 100%; height: 4px; }
+
+.pop { position: absolute; bottom: 122px; left: 50%; transform: translateX(-50%); border-radius: 14px; padding: 14px 16px; display: none; min-width: 280px; z-index: 6; }
+.pop.open { display: block; }
+.settings { display: grid; gap: 12px; font-size: 12.5px; color: var(--mute); }
+.settings label { display: grid; grid-template-columns: 1fr 130px 36px; align-items: center; gap: 10px; }
+.settings label.sel { grid-template-columns: 1fr auto; }
+.settings output { text-align: right; color: var(--text); font-size: 12px; }
+.settings input[type=range] { width: 100%; }
+input.hue { -webkit-appearance: none; appearance: none; height: 8px; border-radius: 4px; background: linear-gradient(90deg, var(--hue-track)); }
+input.hue::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 2px rgba(0,0,0,.5); }
+input.hue::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: #fff; border: 0; }
+
+.rail { position: absolute; right: 22px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 10px; align-items: center; transition: opacity .2s; }
+#app.docked .rail, .rail.off { opacity: 0; pointer-events: none; }
+.chip { border-radius: 50%; transition: transform .15s; }
+.chip:hover { transform: scale(1.18); }
+.chip.hidden { background: transparent !important; border: 2px solid; }
+.chip.sel { outline: 2px solid #fff; outline-offset: 3px; }
+
+.lin-float { position: absolute; top: 18px; right: 18px; width: 344px; border-radius: 16px; padding: 14px 14px 10px; display: none; z-index: 4; }
+.lin-float.open { display: block; }
+#app.docked .lin-float { display: none; }
+.lin-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+.lin-head b { font-weight: 600; font-size: 13px; }
+.lin-head span { color: var(--dim); font-size: 12px; }
+.chart-wrap { position: relative; }
+.chart-wrap canvas { display: block; width: 100%; height: 210px; cursor: pointer; }
+.panel .chart-wrap canvas { height: 300px; }
+.legend { display: flex; gap: 14px; margin-top: 8px; font-size: 11.5px; color: var(--dim); }
+.legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--mute); margin-right: 5px; vertical-align: -1px; }
+.legend i.ring { background: none; border: 1.5px solid var(--mute); }
+.legend i.line { width: 14px; height: 2px; border-radius: 1px; vertical-align: 2px; }
+.ctip { position: absolute; display: none; pointer-events: none; width: 210px; padding: 9px 11px; border-radius: 10px; background: rgba(10,11,15,.95); border: 1px solid #23262f; font-size: 12px; color: #b9becb; line-height: 1.5; z-index: 2; }
+.ctip .t1 { display: flex; align-items: center; gap: 7px; color: #fff; font-weight: 600; margin-bottom: 2px; text-transform: capitalize; }
+.ctip .t3 { color: var(--dim); margin-top: 4px; font-size: 11px; }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: -1px; }
+
+.panel { overflow: hidden; background: #0b0c11; border-left: 1px solid var(--line); }
+.panel-inner { width: var(--panel); height: 100%; overflow: auto; padding: 22px 20px 80px; display: flex; flex-direction: column; gap: 22px; }
+.phead { display: flex; justify-content: space-between; align-items: baseline; font-weight: 500; font-size: 15px; }
+.phead small { color: var(--dim); font-weight: 400; font-size: 12px; }
+.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 12px; }
+.stats b { display: block; font-size: 22px; font-weight: 500; letter-spacing: -.01em; }
+.stats span { color: var(--mute); font-size: 12px; }
+.sec-t { font-weight: 600; font-size: 13px; margin-bottom: 12px; }
+
+.pill { position: absolute; top: 18px; left: 50%; transform: translateX(-50%); border-radius: 999px; padding: 6px 6px 6px 14px; display: none; align-items: center; gap: 14px; font-size: 12.5px; color: #c3c8d4; z-index: 5; white-space: nowrap; }
+.pill.open { display: flex; }
+.pill b { color: #fff; font-weight: 600; }
+.pill .k { display: flex; align-items: center; gap: 6px; }
+.ico-fill { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+.ico-ring { width: 11px; height: 11px; border-radius: 3px; display: inline-block; border: 2px solid; }
+.pill button { width: 26px; height: 26px; border-radius: 50%; color: var(--mute); }
+.pill button:hover { background: rgba(255,255,255,.08); color: #fff; }
+
+.card { position: absolute; width: 276px; border-radius: 16px; padding: 14px; display: none; z-index: 5; transition: opacity .2s; }
+.card.dead { opacity: .62; }
+.card .head { display: flex; align-items: flex-start; gap: 10px; }
+.card .title { font-weight: 600; font-size: 14px; }
+.card .sub { color: var(--mute); font-size: 12px; margin-top: 1px; }
+.card .x { margin-left: auto; width: 26px; height: 26px; border-radius: 8px; color: var(--mute); flex: none; }
+.card .x:hover { background: rgba(255,255,255,.08); color: #fff; }
+.card .cap { color: var(--dim); font-size: 11.5px; margin: 12px 0 8px; }
+.card .eq { display: flex; align-items: center; gap: 6px; }
+.card .gene { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 10px 4px 9px; border-radius: 12px; background: rgba(255,255,255,.035); border: 1px solid transparent; transition: border-color .12s, background .12s; }
+.card .gene:hover { border-color: rgba(255,255,255,.16); background: rgba(255,255,255,.06); }
+.card .gene.on { border-color: #fff; }
+.card .gene .gd { width: 22px; height: 22px; border-radius: 50%; }
+.card .gene.hid .gd { background: transparent !important; border: 2px dashed currentColor; }
+.card .gene .nm { font-size: 12px; font-weight: 500; color: var(--text); text-transform: capitalize; }
+.card .gene .st { font-size: 10px; color: var(--mute); text-transform: uppercase; letter-spacing: .09em; }
+.card .gene.hid .st { color: var(--dim); }
+.bars { display: flex; gap: 2px; }
+.bars i { width: 9px; height: 3px; border-radius: 2px; background: rgba(255,255,255,.14); }
+.bars i.f { background: #dfe3ec; }
+.card .op { color: var(--dim); font-size: 15px; width: 10px; text-align: center; }
+.card .res { width: 40px; height: 40px; border-radius: 11px; flex: none; }
+.card .why { margin-top: 12px; font-size: 12.5px; color: #c4c8d3; line-height: 1.5; }
+.card .why b { font-weight: 600; color: #fff; }
+.card .foot { margin-top: 10px; font-size: 11px; color: var(--dim); }
+
+#switcher { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 100; display: flex; align-items: center; gap: 4px; padding: 4px; border-radius: 999px; background: #fff; color: #111; font: 600 12px/1 Inter, sans-serif; box-shadow: 0 6px 24px rgba(0,0,0,.35); border: 2px dashed #ff3b6b; }
+#switcher button { width: 28px; height: 28px; border-radius: 50%; color: #111; font-size: 14px; }
+#switcher button:hover { background: #f1f1f1; }
+#switcher span { padding: 0 8px; white-space: nowrap; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="stage" id="stage">
+    <canvas id="world"></canvas>
+    <div class="vig"></div>
+    <div class="mark">genetic life<small id="gen"></small></div>
+    <div class="hint" id="hint">Click a cell to see its colour genes &middot; drag to move &middot; scroll to zoom</div>
+    <div class="pill glass" id="pill"></div>
+    <div class="rail" id="rail"></div>
+    <div class="lin-float glass" id="linFloat">
+      <div id="lineage">
+        <div class="lin-head"><b>Lineage</b><span>each colour gene's hue over time</span></div>
+        <div class="chart-wrap"><canvas id="chart"></canvas><div class="ctip" id="ctip"></div></div>
+        <div class="legend"><span><i class="line" style="background:linear-gradient(90deg,#7bd,#db7)"></i>a gene</span><span><i></i>shown today</span><span><i class="ring"></i>hidden everywhere</span></div>
+      </div>
+    </div>
+    <div class="card glass" id="card"></div>
+    <div class="pop glass" id="popFloat">
+      <div class="settings" id="settings">
+        <label class="sel"><span>Rule</span><select id="rule"><option value="B3/S23">Conway's Life</option><option value="B36/S23">HighLife</option><option value="B3678/S34678">Day &amp; Night</option><option value="B2/S">Seeds</option></select></label>
+        <label><span>Mutation</span><input id="mr" type="range" min="0" max="60"><output id="mrv"></output></label>
+        <label><span>Mutation reach</span><input id="mm" type="range" min="5" max="90"><output id="mmv"></output></label>
+        <label><span>Brush colour</span><input id="bh" class="hue" type="range" min="0" max="359"><output><span class="sw" id="bhv"></span></output></label>
+      </div>
+    </div>
+    <div class="dock glass" id="dock">
+      <button id="play" title="Play / pause (Space)"></button>
+      <button id="step" title="Step one generation (.)"></button>
+      <button id="speed" class="speed"></button>
+      <span class="br"></span>
+      <div class="sep"></div>
+      <button id="look" title="Look: drag to move, click a cell to inspect"></button>
+      <button id="paint" title="Paint"><span class="dot" id="dot"></span></button>
+      <div class="sep"></div>
+      <button id="zo" title="Zoom out"></button>
+      <button id="zi" title="Zoom in"></button>
+      <div class="sep"></div>
+      <button id="new" title="New random world"></button>
+      <button id="lin" class="float-only" title="Lineage"></button>
+      <button id="set" class="float-only" title="Settings"></button>
+      <div class="sep"></div>
+      <button id="dockBtn"></button>
+    </div>
+  </div>
+  <aside class="panel" id="panel"><div class="panel-inner">
+    <div class="phead">genetic life<small id="pgen"></small></div>
+    <div id="dockSlot"></div>
+    <div class="stats" id="stats"></div>
+    <section id="linSlot"></section>
+    <section><div class="sec-t">World</div><div id="setSlot"></div></section>
+  </div></aside>
+</div>
+<div id="switcher"><button id="prev" aria-label="Previous variant">&larr;</button><span id="vlabel"></span><button id="next" aria-label="Next variant">&rarr;</button></div>
+<script id="genetics-model">
+const Genetics = (() => {
+  function rand(world) {
+    let t = (world.rngState = (world.rngState + 0x6d2b79f5) | 0);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+
+  function wrapHue(h) {
+    return ((h % 360) + 360) % 360;
+  }
+
+  function parseRule(text) {
+    const m = /^\s*B([0-8]*)\s*\/\s*S([0-8]*)\s*$/i.exec(text);
+    if (!m) return null;
+    const birth = new Array(9).fill(false);
+    const survive = new Array(9).fill(false);
+    for (const c of m[1]) birth[+c] = true;
+    for (const c of m[2]) survive[+c] = true;
+    return { birth, survive, text: `B${[...new Set(m[1])].sort().join('')}/S${[...new Set(m[2])].sort().join('')}` };
+  }
+
+  function create({ size, seed, rule, mutationRate = 0, mutationMagnitude = 12 }) {
+    const n = size * size;
+    return {
+      width: size, height: size, generation: 0, rngState: seed | 0,
+      rule: parseRule(rule), mutationRate, mutationMagnitude,
+      alive: new Uint8Array(n), a1: new Int32Array(n), a2: new Int32Array(n),
+      nextAlive: new Uint8Array(n), nextA1: new Int32Array(n), nextA2: new Int32Array(n),
+      alleles: { hue: [], dom: [], parent: [], born: [], name: [] },
+      founders: [], lastBirths: 0, lastSurprises: 0, lastMutations: 0, totalSurprises: 0,
+      populationHistory: [],
+    };
+  }
+
+  function addAllele(world, hue, dom, parent, name) {
+    const A = world.alleles;
+    A.hue.push(wrapHue(hue)); A.dom.push(dom); A.parent.push(parent);
+    A.born.push(world.generation); A.name.push(name);
+    return A.hue.length - 1;
+  }
+
+  function addFounder(world, { name, hue, dominance }) {
+    const id = addAllele(world, hue, dominance, -1, name);
+    world.founders.push(id);
+    return id;
+  }
+
+  function phenotype(world, a, b) {
+    const { hue, dom } = world.alleles;
+    if (a === b) return { hue: hue[a], showA: true, showB: true };
+    if (dom[a] > dom[b]) return { hue: hue[a], showA: true, showB: false };
+    if (dom[b] > dom[a]) return { hue: hue[b], showA: false, showB: true };
+    const ha = hue[a], hb = hue[b];
+    let d = wrapHue(hb - ha);
+    let mid;
+    if (d === 180) mid = wrapHue(Math.min(ha, hb) + 90);
+    else if (d < 180) mid = wrapHue(ha + d / 2);
+    else mid = wrapHue(ha - (360 - d) / 2);
+    return { hue: mid, showA: true, showB: true };
+  }
+
+  function setCell(world, i, a, b) { world.alive[i] = 1; world.a1[i] = a; world.a2[i] = b; }
+  function clearCell(world, i) { world.alive[i] = 0; }
+  function clearAll(world) { world.alive.fill(0); }
+
+  function pairsFrom(ids) {
+    const pairs = [];
+    for (const a of ids) for (const b of ids) pairs.push([a, b]);
+    return pairs;
+  }
+
+  function soup(world, { density, pairs, x0 = 0, y0 = 0, x1 = world.width, y1 = world.height }) {
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {
+      if (rand(world) < density) {
+        const [a, b] = pairs[Math.floor(rand(world) * pairs.length)];
+        setCell(world, y * world.width + x, a, b);
+      }
+    }
+  }
+
+  function step(world) {
+    const { width: w, height: h, alive, a1, a2, nextAlive, nextA1, nextA2, rule, alleles } = world;
+    const live = [];
+    for (let i = 0; i < alive.length; i++) if (alive[i]) live.push(i);
+    if (world.founders.length === 0) addFounder(world, { name: 'Founder', hue: 200, dominance: 1 });
+    let mutated = false;
+    const pass = (p) => (rand(world) < 0.5 ? a1[p] : a2[p]);
+    const draw = () => live.length > 0
+      ? pass(live[Math.floor(rand(world) * live.length)])
+      : world.founders[Math.floor(rand(world) * world.founders.length)];
+    const mutate = (id) => {
+      if (world.mutationRate > 0 && rand(world) < world.mutationRate) {
+        mutated = true;
+        world.lastMutations++;
+        const hue = alleles.hue[id] + (rand(world) * 2 - 1) * world.mutationMagnitude;
+        return addAllele(world, hue, Math.floor(rand(world) * 4), id, null);
+      }
+      return id;
+    };
+    const nb = new Int32Array(8);
+    let births = 0, surprises = 0;
+    world.lastMutations = 0;
+    for (let y = 0; y < h; y++) {
+      const ym = ((y - 1 + h) % h) * w, y0 = y * w, yp = ((y + 1) % h) * w;
+      for (let x = 0; x < w; x++) {
+        const xm = (x - 1 + w) % w, xp = (x + 1) % w;
+        let n = 0;
+        const around = [ym + xm, ym + x, ym + xp, y0 + xm, y0 + xp, yp + xm, yp + x, yp + xp];
+        for (let k = 0; k < 8; k++) if (alive[around[k]]) nb[n++] = around[k];
+        const i = y0 + x;
+        if (alive[i]) {
+          if (rule.survive[n]) { nextAlive[i] = 1; nextA1[i] = a1[i]; nextA2[i] = a2[i]; }
+          else nextAlive[i] = 0;
+        } else if (rule.birth[n]) {
+          mutated = false;
+          let ca, cb, p1 = -1, p2 = -1;
+          if (n >= 2) {
+            const i1 = Math.floor(rand(world) * n);
+            let i2 = Math.floor(rand(world) * (n - 1));
+            if (i2 >= i1) i2++;
+            p1 = nb[i1]; p2 = nb[i2];
+            ca = pass(p1); cb = pass(p2);
+          } else if (n === 1) {
+            p1 = nb[0];
+            ca = pass(p1); cb = draw();
+          } else {
+            ca = draw(); cb = draw();
+          }
+          ca = mutate(ca); cb = mutate(cb);
+          nextAlive[i] = 1; nextA1[i] = ca; nextA2[i] = cb;
+          births++;
+          if (p2 >= 0 && !mutated) {
+            const c = phenotype(world, ca, cb).hue;
+            const h1 = phenotype(world, a1[p1], a2[p1]).hue;
+            const h2 = phenotype(world, a1[p2], a2[p2]).hue;
+            if (c !== h1 && c !== h2) surprises++;
+          }
+        } else nextAlive[i] = 0;
+      }
+    }
+    world.alive = nextAlive; world.nextAlive = alive;
+    world.a1 = nextA1; world.nextA1 = a1;
+    world.a2 = nextA2; world.nextA2 = a2;
+    world.generation++;
+    world.lastBirths = births; world.lastSurprises = surprises; world.totalSurprises += surprises;
+    let pop = 0;
+    for (let i = 0; i < world.alive.length; i++) pop += world.alive[i];
+    world.populationHistory.push(pop);
+    if (world.populationHistory.length > 400) world.populationHistory.shift();
+  }
+
+  function census(world) {
+    const count = world.alleles.hue.length;
+    const copies = new Int32Array(count), showing = new Int32Array(count), hiding = new Int32Array(count);
+    const bins = new Array(36).fill(0);
+    let population = 0;
+    const { alive, a1, a2 } = world;
+    for (let i = 0; i < alive.length; i++) {
+      if (!alive[i]) continue;
+      population++;
+      const a = a1[i], b = a2[i];
+      const p = phenotype(world, a, b);
+      bins[Math.floor(p.hue / 10) % 36]++;
+      copies[a]++; copies[b]++;
+      if (a === b) { showing[a]++; continue; }
+      if (p.showA) showing[a]++; else hiding[a]++;
+      if (p.showB) showing[b]++; else hiding[b]++;
+    }
+    const living = [];
+    for (let id = 0; id < count; id++) if (copies[id] > 0) living.push({ id, copies: copies[id], showing: showing[id], hiding: hiding[id] });
+    living.sort((x, y) => y.copies - x.copies);
+    return { population, living, bins, hidden: living.filter((l) => l.showing === 0).length };
+  }
+
+  function lineage(world, id) {
+    const chain = [];
+    for (let cur = id; cur >= 0; cur = world.alleles.parent[cur]) chain.push(cur);
+    return chain;
+  }
+
+  function oklchToRgb(L, C, hDeg) {
+    const h = (hDeg * Math.PI) / 180;
+    const a = C * Math.cos(h), b = C * Math.sin(h);
+    const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+    const m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+    const s = (L - 0.0894841775 * a - 1.291485548 * b) ** 3;
+    const lin = [
+      4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+      -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+      -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
+    ];
+    return lin.map((v) => {
+      const c = v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(Math.max(v, 0), 1 / 2.4) - 0.055;
+      return Math.round(Math.min(1, Math.max(0, c)) * 255);
+    });
+  }
+
+  return { parseRule, create, addFounder, phenotype, setCell, clearCell, clearAll, pairsFrom, soup, step, census, lineage, oklchToRgb };
+})();
+</script>
+
+<script id="app-script">
+const MODES = { 1: { key: 'window', name: 'Feathered window' }, 2: { key: 'frost', name: 'Frosted surround' }, 3: { key: 'free', name: 'Free camera, clamped zoom' } };
+const SPEEDS = [{ label: '½×', gps: 6 }, { label: '1×', gps: 15 }, { label: '2×', gps: 30 }, { label: '4×', gps: 60 }];
+const S = {
+  world: null, running: true, speed: 1, gps: 15, acc: 0, tool: 'look', highlight: -1, fam: null,
+  brushHue: 20, brushAlleles: new Map(), census: null, lastCensus: 0, lastSeen: [], hlCounts: { shown: 0, hidden: 0 },
+  listeners: new Set(), mode: 'window', docked: false, linOpen: false, setOpen: false, inspect: null,
+};
+
+function makePalette(L, C) {
+  const t = new Uint32Array(720);
+  for (let i = 0; i < 720; i++) { const [r, g, b] = Genetics.oklchToRgb(L, C, i / 2); t[i] = (255 << 24) | (b << 16) | (g << 8) | r; }
+  return { css: (h) => { const [r, g, b] = Genetics.oklchToRgb(L, C, h); return 'rgb(' + r + ',' + g + ',' + b + ')'; }, at: (h) => t[Math.floor(h * 2) % 720] };
+}
+const P = makePalette(0.76, 0.17);
+const rgba = (r, g, b) => (255 << 24) | (b << 16) | (g << 8) | r;
+
+const HUE_NAMES = [[0, 'rose'], [29, 'red'], [50, 'orange'], [75, 'amber'], [100, 'yellow'], [123, 'lime'], [145, 'green'], [165, 'jade'], [186, 'teal'], [207, 'cyan'], [232, 'sky'], [262, 'blue'], [285, 'indigo'], [305, 'violet'], [324, 'purple'], [344, 'pink']];
+function hueName(h) {
+  let best = HUE_NAMES[0][1], bd = 999;
+  for (const [c, n] of HUE_NAMES) { const d = Math.min(Math.abs(h - c), 360 - Math.abs(h - c)); if (d < bd) { bd = d; best = n; } }
+  return best;
+}
+const cap = (s) => s[0].toUpperCase() + s.slice(1);
+const sw = (h) => '<span class="sw" style="background:' + P.css(h) + '"></span>';
+
+function newWorld({ size = 160, seed = (Date.now() & 0x7fffffff), founders = 3, density = 0.3, rule = 'B3/S23', mutationRate = 0.01, mutationMagnitude = 30 } = {}) {
+  const w = Genetics.create({ size, seed, rule, mutationRate, mutationMagnitude });
+  const base = seed % 360, doms = [2, 1, 0, 3, 1, 2], ids = [];
+  for (let k = 0; k < founders; k++) ids.push(Genetics.addFounder(w, { name: null, hue: base + (k * 360) / founders, dominance: doms[k % doms.length] }));
+  Genetics.soup(w, { density, pairs: Genetics.pairsFrom(ids) });
+  S.world = w; S.highlight = -1; S.fam = null; S.brushAlleles = new Map(); S.lastSeen = []; S.inspect = null;
+  refreshCensus(); emit();
+}
+function emit() { for (const f of S.listeners) f(); }
+function refreshCensus() {
+  S.census = Genetics.census(S.world); S.lastCensus = performance.now();
+  for (const l of S.census.living) S.lastSeen[l.id] = S.world.generation;
+}
+function syncFam() {
+  const hl = S.highlight;
+  if (hl < 0) { S.fam = null; return null; }
+  const A = S.world.alleles, n = A.hue.length;
+  let f = S.fam;
+  if (!f || f.hl !== hl) f = S.fam = { hl, n: 0, a: new Uint8Array(64) };
+  if (n > f.a.length) { const a = new Uint8Array(n * 2); a.set(f.a); f.a = a; }
+  for (let id = f.n; id < n; id++) { const p = A.parent[id]; f.a[id] = id === hl || (p >= 0 && f.a[p]) ? 1 : 0; }
+  f.n = n;
+  return f.a;
+}
+function setHighlight(id) { S.highlight = S.highlight === id ? -1 : id; R.markDirty(); emit(); }
+
+function createRenderer(canvas) {
+  const ctx = canvas.getContext('2d');
+  const mk = () => { const c = document.createElement('canvas'); return [c, c.getContext('2d')]; };
+  const [off, octx] = mk(), [tmp, tctx] = mk(), [msk, mctx] = mk();
+  const cam = { ox: 0, oy: 0, s: 9 };
+  const BG = rgba(6, 7, 10), DIM = rgba(24, 26, 33), FADE = 70;
+  const mixBG = (c, a) => { const b = 1 - a; return (255 << 24 | Math.round((c >>> 16 & 255) * a + 10 * b) << 16 | Math.round((c >>> 8 & 255) * a + 7 * b) << 8 | Math.round((c & 255) * a + 6 * b)) >>> 0; };
+  let W = 0, H = 0, img = null, px = null, dirty = true, colors = null, kinds = null, masks = null, masksS = 0, maskKey = '', fr = { x: 0, y: 0, w: 0, h: 0 }, centered = false;
+
+  function resize() {
+    const r = canvas.getBoundingClientRect();
+    const nw = Math.max(1, Math.floor(r.width)), nh = Math.max(1, Math.floor(r.height));
+    if (nw === W && nh === H) return;
+    if (W > 1) { cam.ox += Math.round((nw - W) / 2); cam.oy += Math.round((nh - H) / 2); }
+    W = nw; H = nh;
+    for (const c of [canvas, off, tmp, msk]) { c.width = W; c.height = H; }
+    img = octx.createImageData(W, H); px = new Uint32Array(img.data.buffer);
+    maskKey = ''; dirty = true;
+    if (!centered && W > 1) { clampScale(); center(); centered = true; } else clampScale();
+  }
+  function minScale() { return S.mode === 'free' ? Math.max(2, Math.ceil(Math.max(W / S.world.width, H / S.world.height))) : 2; }
+  function setScale(ns, ax, ay) {
+    ns = Math.max(minScale(), Math.min(40, ns));
+    if (ns === cam.s) return;
+    cam.ox = Math.round(ax - ((ax - cam.ox) * ns) / cam.s); cam.oy = Math.round(ay - ((ay - cam.oy) * ns) / cam.s);
+    cam.s = ns; dirty = true;
+  }
+  function clampScale() { if (cam.s < minScale()) setScale(minScale(), W / 2, H / 2); }
+  function center() { cam.ox = Math.round(W / 2 - (S.world.width * cam.s) / 2); cam.oy = Math.round(H / 2 - (S.world.height * cam.s) / 2); dirty = true; }
+  function frameRect() {
+    if (S.mode === 'free') return { x: 0, y: 0, w: W, h: H };
+    const w = Math.min(W, S.world.width * cam.s), h = Math.min(H, S.world.height * cam.s);
+    return { x: Math.floor((W - w) / 2), y: Math.floor((H - h) / 2), w, h };
+  }
+  function buildMasks(s) {
+    const g = s >= 4 ? Math.max(1, Math.round(s * 0.12)) : 0, q = s - g, r = s >= 5 ? q * 0.34 : 0, t = Math.max(1, Math.round(s * 0.16));
+    const inRR = (x, y, x0, y0, x1, y1, rad) => {
+      if (x < x0 || y < y0 || x > x1 || y > y1) return false;
+      const dx = Math.max(x0 + rad - x, 0, x - (x1 - rad)), dy = Math.max(y0 + rad - y, 0, y - (y1 - rad));
+      return dx * dx + dy * dy <= rad * rad + 1e-6;
+    };
+    const fill = new Uint8Array(s * s), ring = new Uint8Array(s * s);
+    for (let y = 0; y < s; y++) for (let x = 0; x < s; x++) {
+      const cx = x + 0.5, cy = y + 0.5, a = inRR(cx, cy, 0, 0, q, q, r);
+      fill[y * s + x] = a ? 1 : 0;
+      ring[y * s + x] = a && !(q - 2 * t > 0 && inRR(cx, cy, t, t, q - t, q - t, Math.max(0, r - t))) ? 1 : 0;
+    }
+    return { fill, ring, q, r };
+  }
+  function buildFeather() {
+    const F = 46, sig = F / 2.6;
+    mctx.clearRect(0, 0, W, H);
+    const cx = fr.w < W, cy = fr.h < H;
+    const x0 = cx ? fr.x + F * 0.8 : -F * 3, x1 = cx ? fr.x + fr.w - F * 0.8 : W + F * 3;
+    const y0 = cy ? fr.y + F * 0.8 : -F * 3, y1 = cy ? fr.y + fr.h - F * 0.8 : H + F * 3;
+    mctx.filter = 'blur(' + sig + 'px)'; mctx.fillStyle = '#fff';
+    mctx.beginPath(); mctx.roundRect(x0, y0, x1 - x0, y1 - y0, cx && cy ? 28 : 0); mctx.fill();
+    mctx.filter = 'none';
+  }
+  function colorCells() {
+    const w = S.world, n = w.width * w.height;
+    if (!colors || colors.length !== n) { colors = new Uint32Array(n); kinds = new Uint8Array(n); }
+    const { alive, a1, a2 } = w, fam = syncFam(), hue = w.alleles.hue;
+    let shown = 0, hidden = 0;
+    for (let i = 0; i < n; i++) {
+      if (!alive[i]) { kinds[i] = 0; continue; }
+      const a = a1[i], b = a2[i], p = Genetics.phenotype(w, a, b);
+      if (!fam) { kinds[i] = 1; colors[i] = P.at(p.hue); continue; }
+      const fa = fam[a], fb = fam[b];
+      if (!fa && !fb) { kinds[i] = 1; colors[i] = DIM; }
+      else if ((fa && p.showA) || (fb && p.showB)) { kinds[i] = 1; colors[i] = P.at(p.hue); shown++; }
+      else { kinds[i] = 2; colors[i] = P.at(hue[fa ? a : b]); hidden++; }
+    }
+    S.hlCounts = { shown, hidden };
+  }
+  function draw() {
+    const w = S.world, s = cam.s, ww = w.width, wh = w.height;
+    colorCells();
+    if (masksS !== s) { masks = buildMasks(s); masksS = s; }
+    const colCell = new Int32Array(W), colIn = new Int32Array(W), { fill, ring } = masks;
+    fr = frameRect();
+    // Window mode: fade whole cells by their centre's distance to the window edge, and drop cells the edge cuts through,
+    // so the edge never shows half-faded cell columns or thin slivers.
+    const win = S.mode === 'window', ax = new Float32Array(W).fill(1), ay = new Float32Array(H).fill(1);
+    const fade = (start, len, lo, size) => { const d = Math.min(start + s / 2 - lo, lo + size - (start + s / 2)); if (start < lo || start + s > lo + size) return 0; const t = Math.min(1, d / FADE); return t * t * (3 - 2 * t); };
+    for (let x = 0; x < W; x++) { const r = x - cam.ox, c = Math.floor(r / s); colCell[x] = ((c % ww) + ww) % ww; colIn[x] = r - c * s; if (win && fr.w < W) ax[x] = fade(cam.ox + c * s, s, fr.x, fr.w); }
+    if (win && fr.h < H) for (let y = 0; y < H; y++) { const c = Math.floor((y - cam.oy) / s); ay[y] = fade(cam.oy + c * s, s, fr.y, fr.h); }
+    for (let y = 0; y < H; y++) {
+      const r = y - cam.oy, c = Math.floor(r / s), row = (((c % wh) + wh) % wh) * ww, inY = (r - c * s) * s, o = y * W, fy = ay[y];
+      for (let x = 0; x < W; x++) {
+        const i = row + colCell[x], k = kinds[i];
+        let v = k === 0 ? BG : ((k === 1 ? fill : ring)[inY + colIn[x]] ? colors[i] : BG);
+        if (v !== BG) { const a = fy * ax[x]; if (a <= 0.02) v = BG; else if (a < 1) v = mixBG(v, a); }
+        px[o + x] = v;
+      }
+    }
+    octx.putImageData(img, 0, 0);
+    if (S.mode === 'free' || win) { if (win) { ctx.fillStyle = '#06070a'; ctx.fillRect(0, 0, W, H); } ctx.drawImage(off, 0, 0); }
+    else {
+      ctx.fillStyle = '#06070a'; ctx.fillRect(0, 0, W, H);
+      if (S.mode === 'frost') { ctx.filter = 'blur(6px) brightness(.4) saturate(.7)'; ctx.drawImage(off, 0, 0); ctx.filter = 'none'; }
+      const key = [fr.x, fr.y, fr.w, fr.h, W, H].join();
+      if (key !== maskKey) { buildFeather(); maskKey = key; }
+      tctx.globalCompositeOperation = 'copy'; tctx.drawImage(msk, 0, 0);
+      tctx.globalCompositeOperation = 'source-in'; tctx.drawImage(off, 0, 0);
+      tctx.globalCompositeOperation = 'source-over';
+      ctx.drawImage(tmp, 0, 0);
+    }
+    drawSelection();
+    dirty = false;
+  }
+  function cellScreen(i) {
+    const w = S.world, s = cam.s, ww = w.width * s, wh = w.height * s;
+    let x = cam.ox + (i % w.width) * s, y = cam.oy + Math.floor(i / w.width) * s;
+    x = fr.x + ((((x - fr.x) % ww) + ww) % ww); y = fr.y + ((((y - fr.y) % wh) + wh) % wh);
+    if (x + s > fr.x + fr.w || y + s > fr.y + fr.h) return null;
+    return { x, y, s };
+  }
+  function drawSelection() {
+    if (!S.inspect) return;
+    const p = cellScreen(S.inspect.i);
+    if (!p) return;
+    const { q, r } = masks, pad = Math.max(3, Math.round(p.s * 0.3));
+    ctx.beginPath(); ctx.roundRect(p.x - pad, p.y - pad, q + pad * 2, q + pad * 2, r + pad);
+    ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.stroke();
+    ctx.lineWidth = 2; ctx.strokeStyle = S.inspect.dead ? 'rgba(255,255,255,.45)' : '#fff'; ctx.stroke();
+  }
+  function cellAt(mx, my) {
+    if (mx < fr.x || my < fr.y || mx >= fr.x + fr.w || my >= fr.y + fr.h) return -1;
+    const w = S.world, cx = Math.floor((mx - cam.ox) / cam.s), cy = Math.floor((my - cam.oy) / cam.s);
+    return (((cy % w.height) + w.height) % w.height) * w.width + (((cx % w.width) + w.width) % w.width);
+  }
+  function brushAllele() {
+    if (!S.brushAlleles.has(S.brushHue)) S.brushAlleles.set(S.brushHue, Genetics.addFounder(S.world, { name: null, hue: S.brushHue, dominance: 2 }));
+    return S.brushAlleles.get(S.brushHue);
+  }
+  function paint(i) {
+    if (i < 0) return;
+    const w = S.world, a = brushAllele(), cx = i % w.width, cy = Math.floor(i / w.width);
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      if (Math.abs(dx) + Math.abs(dy) > 1) continue;
+      Genetics.setCell(w, (((cy + dy) % w.height + w.height) % w.height) * w.width + (((cx + dx) % w.width + w.width) % w.width), a, a);
+    }
+    dirty = true;
+  }
+  let down = null;
+  const pos = (e) => { const r = canvas.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+  canvas.addEventListener('pointerdown', (e) => {
+    const [x, y] = pos(e); down = { x, y, ox: cam.ox, oy: cam.oy, moved: false };
+    canvas.setPointerCapture(e.pointerId);
+    if (S.tool === 'paint') paint(cellAt(x, y));
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!down) return;
+    const [x, y] = pos(e);
+    if (Math.hypot(x - down.x, y - down.y) > 3) { down.moved = true; if (S.tool === 'look') canvas.classList.add('grabbing'); }
+    if (S.tool === 'paint') { paint(cellAt(x, y)); return; }
+    cam.ox = down.ox + (x - down.x); cam.oy = down.oy + (y - down.y); dirty = true;
+  });
+  canvas.addEventListener('pointerup', (e) => {
+    canvas.classList.remove('grabbing');
+    if (down && !down.moved && S.tool === 'look') { const [x, y] = pos(e); inspectCell(cellAt(x, y)); }
+    if (S.tool === 'paint') { refreshCensus(); emit(); }
+    down = null;
+  });
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const [x, y] = pos(e);
+    setScale(cam.s + (e.deltaY < 0 ? 1 : -1) * Math.max(1, Math.round(cam.s / 6)), x, y);
+  }, { passive: false });
+  new ResizeObserver(resize).observe(canvas);
+  resize();
+  return {
+    markDirty() { dirty = true; },
+    frame() { if (!dirty) return false; draw(); return true; },
+    recenter: center,
+    modeChanged() { maskKey = ''; clampScale(); dirty = true; },
+    zoom(d) { setScale(cam.s + d * Math.max(1, Math.round(cam.s / 6)), W / 2, H / 2); },
+    cellScreen,
+    size: () => [W, H],
+  };
+}
+
+const $ = (id) => document.getElementById(id);
+const ICON = {
+  play: '<svg width="16" height="16" viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z" fill="currentColor"/></svg>',
+  pause: '<svg width="16" height="16" viewBox="0 0 16 16"><rect x="3.5" y="2.5" width="3" height="11" rx="1" fill="currentColor"/><rect x="9.5" y="2.5" width="3" height="11" rx="1" fill="currentColor"/></svg>',
+  step: '<svg width="16" height="16" viewBox="0 0 16 16"><path d="M3 2.5v11l7-5.5z" fill="currentColor"/><rect x="11" y="2.5" width="2.2" height="11" rx="1" fill="currentColor"/></svg>',
+  hand: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M5 8V3.5a1 1 0 0 1 2 0V7m0-3.5V2.5a1 1 0 0 1 2 0V7m0-3.5a1 1 0 0 1 2 0V8m0-2.5a1 1 0 0 1 2 0V10a4.5 4.5 0 0 1-4.5 4.5h-.6A4 4 0 0 1 4 12.6L2.6 9.8a1 1 0 0 1 1.7-1L5 10"/></svg>',
+  shuffle: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h2.5c3 0 4 8 7 8H14M2 12h2.5c1.2 0 2-1.2 2.7-2.6M11.5 4H14m-2-2 2 2-2 2m0 4 2 2-2 2M9 6.4C9.6 5 10.4 4 11.5 4"/></svg>',
+  gear: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"/></svg>',
+  lineage: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8h3.5M5.5 8 8 4h6M5.5 8 8 12h6M10 4v-.01"/></svg>',
+  plus: '<svg width="16" height="16" viewBox="0 0 16 16" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg>',
+  minus: '<svg width="16" height="16" viewBox="0 0 16 16" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M3 8h10"/></svg>',
+  dockSide: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="M10 3v10"/></svg>',
+  dockFloat: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="M5.5 10.5h5"/></svg>',
+};
+
+newWorld();
+const R = createRenderer($('world'));
+const card = $('card');
+
+function inspectCell(i) {
+  const w = S.world;
+  if (i < 0 || !w.alive[i]) { S.inspect = null; renderCard(); R.markDirty(); return; }
+  S.inspect = { i, a: w.a1[i], b: w.a2[i], dead: false, diedAt: 0 };
+  $('hint').classList.add('gone');
+  renderCard(); R.markDirty(); positionCard();
+}
+function closeCard() { S.inspect = null; renderCard(); R.markDirty(); }
+
+function bars(d) { let h = ''; for (let k = 0; k < 4; k++) h += '<i class="' + (k <= d ? 'f' : '') + '"></i>'; return '<span class="bars" title="Strength ' + (d + 1) + ' of 4">' + h + '</span>'; }
+function renderCard() {
+  const I = S.inspect;
+  if (!I) { card.style.display = 'none'; return; }
+  const w = S.world, A = w.alleles;
+  if (!I.dead && (!w.alive[I.i] || w.a1[I.i] !== I.a || w.a2[I.i] !== I.b)) { I.dead = true; I.diedAt = w.generation; R.markDirty(); }
+  const p = Genetics.phenotype(w, I.a, I.b);
+  const pure = I.a === I.b || (p.showA && p.showB && A.hue[I.a] === A.hue[I.b]);
+  const blend = !pure && p.showA && p.showB;
+  const order = p.showA || !p.showB ? [[I.a, p.showA], [I.b, p.showB]] : [[I.b, p.showB], [I.a, p.showA]];
+  const nm = (id) => hueName(A.hue[id]);
+  const gene = ([id, on]) => '<button class="gene ' + (on ? '' : 'hid') + ' ' + (S.highlight === id ? 'on' : '') + '" data-id="' + id + '" style="color:' + P.css(A.hue[id]) + '" title="Light up this gene\'s family">' +
+    '<span class="gd" style="background:' + P.css(A.hue[id]) + '"></span><span class="nm">' + nm(id) + '</span><span class="st">' + (on ? 'shown' : 'hidden') + '</span>' + bars(A.dom[id]) + '</button>';
+  const [s0, s1] = order;
+  let why, sub;
+  if (pure) { sub = 'Pure'; why = 'Both genes are <b>' + nm(I.a) + '</b>, so that is the colour it shows.'; }
+  else if (blend) { sub = 'Blend'; why = '<b>' + cap(nm(I.a)) + '</b> and <b>' + nm(I.b) + '</b> are equally strong, so they mix into <b>' + hueName(p.hue) + '</b>.'; }
+  else {
+    sub = 'Carries a hidden colour';
+    const same = nm(s0[0]) === nm(s1[0]);
+    why = same ? 'The stronger <b>' + nm(s0[0]) + '</b> hides a slightly different ' + nm(s1[0]) + '. Its offspring can still inherit it.'
+      : '<b>' + cap(nm(s0[0])) + '</b> is stronger, so it hides <b>' + nm(s1[0]) + '</b>. Its offspring can still inherit and show ' + nm(s1[0]) + '.';
+  }
+  if (I.dead) sub = 'Died at generation ' + I.diedAt.toLocaleString();
+  card.classList.toggle('dead', I.dead);
+  card.innerHTML =
+    '<div class="head"><div><div class="title">' + cap(hueName(p.hue)) + ' cell</div><div class="sub">' + sub + '</div></div><button class="x" id="cardX" aria-label="Close">&#x2715;</button></div>' +
+    '<div class="cap">One colour gene from each parent. Bars show strength.</div>' +
+    '<div class="eq">' + gene(s0) + '<span class="op">+</span>' + (I.a === I.b ? gene([I.b, true]) : gene(s1)) + '<span class="op">=</span><span class="res" style="background:' + P.css(p.hue) + '"></span></div>' +
+    '<div class="why">' + why + '</div>' +
+    '<div class="foot">Click a gene to light up its family across the world.</div>';
+  card.style.display = 'block';
+}
+card.addEventListener('click', (e) => {
+  if (e.target.closest('#cardX')) { closeCard(); return; }
+  const g = e.target.closest('.gene');
+  if (g) setHighlight(+g.dataset.id);
+});
+function positionCard() {
+  if (!S.inspect) return;
+  const p = R.cellScreen(S.inspect.i), [W, H] = R.size();
+  if (!p) { card.style.visibility = 'hidden'; return; }
+  card.style.visibility = 'visible';
+  const cw = card.offsetWidth, ch = card.offsetHeight, gap = 18;
+  let left = p.x + p.s + gap;
+  if (left + cw > W - 12) left = p.x - gap - cw;
+  if (left < 12) left = Math.min(W - cw - 12, Math.max(12, p.x + p.s / 2 - cw / 2));
+  const top = Math.max(12, Math.min(H - ch - 130, p.y + p.s / 2 - ch / 2));
+  card.style.left = left + 'px'; card.style.top = top + 'px';
+}
+
+const chart = $('chart'), ctip = $('ctip');
+let segs = [], hoverId = -1;
+function chartVisible() { return S.docked || S.linOpen; }
+function drawChart() {
+  if (!chartVisible()) return;
+  const r = chart.getBoundingClientRect();
+  if (r.width < 40) return;
+  const dpr = window.devicePixelRatio || 1, cw = Math.round(r.width * dpr), chh = Math.round(r.height * dpr);
+  if (chart.width !== cw || chart.height !== chh) { chart.width = cw; chart.height = chh; }
+  const c = chart.getContext('2d');
+  c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, r.width, r.height);
+  const W = r.width, H = r.height, w = S.world, A = w.alleles, G = Math.max(1, w.generation), cen = S.census;
+  const L = 16, Rr = 14, T = 6, B = 20, PW = W - L - Rr, PH = H - T - B;
+  const X = (g) => L + (g / G) * PW, Y = (h) => T + (h / 360) * PH;
+  for (let y = 0; y < PH; y += 2) { c.fillStyle = P.css((y / PH) * 360); c.fillRect(2, T + y, 4, 2.2); }
+  const living = new Map(cen.living.map((l) => [l.id, l]));
+  const keep = new Uint8Array(A.hue.length), major = new Uint8Array(A.hue.length), pop2 = Math.max(1, 2 * cen.population);
+  cen.living.forEach((l, rank) => { if (rank < 16 || l.copies / pop2 >= 0.01) for (let k = l.id; k >= 0 && !major[k]; k = A.parent[k]) major[k] = 1; });
+  for (const id of living.keys()) for (let k = id; k >= 0 && !keep[k]; k = A.parent[k]) keep[k] = 1;
+  let lit = null;
+  if (S.highlight >= 0) {
+    const fam = syncFam();
+    lit = new Uint8Array(A.hue.length);
+    for (let k = S.highlight; k >= 0; k = A.parent[k]) lit[k] = 1;
+    for (let id = 0; id < A.hue.length; id++) if (fam[id]) lit[id] = 1;
+  }
+  segs = [];
+  for (let id = 0; id < A.hue.length; id++) {
+    if (!keep[id]) continue;
+    const alive = living.has(id), end = alive ? G : (S.lastSeen[id] ?? A.born[id]);
+    const x0 = X(A.born[id]), x1 = Math.max(x0 + 1, X(end)), y = Y(A.hue[id]);
+    const on = lit ? lit[id] || hoverId === id : major[id] || hoverId === id, strong = hoverId === id || S.highlight === id;
+    c.strokeStyle = P.css(A.hue[id]);
+    c.globalAlpha = on ? (alive ? 0.95 : 0.45) : 0.1;
+    const p = A.parent[id];
+    if (p >= 0 && on) { c.lineWidth = 1; c.globalAlpha *= 0.55; c.beginPath(); c.moveTo(x0 + 0.5, Y(A.hue[p])); c.lineTo(x0 + 0.5, y); c.stroke(); c.globalAlpha /= 0.55; }
+    c.lineWidth = (alive ? 1.6 : 1) * (strong ? 2 : 1);
+    c.beginPath(); c.moveTo(x0, y); c.lineTo(x1, y); c.stroke();
+    segs.push({ id, x0, x1, y });
+  }
+  for (const [id, l] of living) {
+    const y = Y(A.hue[id]), x = X(G), rr = 1.5 + 6.5 * Math.sqrt(l.copies / pop2);
+    c.globalAlpha = (lit ? lit[id] : major[id]) ? 1 : 0.2;
+    c.beginPath(); c.arc(x, y, rr, 0, 7);
+    if (l.showing === 0) { c.strokeStyle = P.css(A.hue[id]); c.lineWidth = 1.5; c.stroke(); } else { c.fillStyle = P.css(A.hue[id]); c.fill(); }
+  }
+  c.globalAlpha = 1; c.fillStyle = '#5f6575'; c.font = '10.5px Inter, system-ui, sans-serif';
+  c.textAlign = 'left'; c.fillText('gen 0', L, H - 5);
+  c.textAlign = 'right'; c.fillText('now · gen ' + G.toLocaleString(), W - Rr + 4, H - 5);
+}
+function tipHtml(id) {
+  const A = S.world.alleles, l = S.census.living.find((x) => x.id === id), p = A.parent[id];
+  const origin = p < 0 ? (A.born[id] === 0 ? 'A founding colour' : 'Painted in at gen ' + A.born[id].toLocaleString())
+    : 'Mutated from ' + sw(A.hue[p]) + ' ' + hueName(A.hue[p]) + ' at gen ' + A.born[id].toLocaleString();
+  const now = l ? Math.max(1, Math.round((100 * l.copies) / (2 * S.census.population))) + '% of genes, ' + (l.showing ? 'shown by ' + l.showing.toLocaleString() + ' cells' : 'hidden in every carrier')
+    : 'Died out at gen ' + (S.lastSeen[id] ?? A.born[id]).toLocaleString();
+  return '<div class="t1">' + sw(A.hue[id]) + hueName(A.hue[id]) + '</div><div>' + origin + '</div><div>' + now + '</div><div class="t3">Click to light up its family</div>';
+}
+chart.addEventListener('pointermove', (e) => {
+  const r = chart.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+  let best = -1, bd = 7;
+  for (const s of segs) { if (x < s.x0 - 4 || x > s.x1 + 10) continue; const d = Math.abs(y - s.y); if (d < bd) { bd = d; best = s.id; } }
+  if (best !== hoverId) { hoverId = best; drawChart(); }
+  if (best < 0) { ctip.style.display = 'none'; return; }
+  ctip.innerHTML = tipHtml(best); ctip.style.display = 'block';
+  const tw = ctip.offsetWidth, th = ctip.offsetHeight;
+  ctip.style.left = (x + 14 + tw > r.width ? x - 14 - tw : x + 14) + 'px';
+  ctip.style.top = Math.min(r.height - th, Math.max(0, y + 12)) + 'px';
+});
+chart.addEventListener('pointerleave', () => { hoverId = -1; ctip.style.display = 'none'; drawChart(); });
+chart.addEventListener('click', () => { if (hoverId >= 0) setHighlight(hoverId); else if (S.highlight >= 0) setHighlight(S.highlight); });
+
+function renderPill() {
+  const pill = $('pill');
+  if (S.highlight < 0) { pill.classList.remove('open'); return; }
+  const A = S.world.alleles, h = A.hue[S.highlight], col = P.css(h), c = S.hlCounts;
+  pill.innerHTML = sw(h) + '<b>' + cap(hueName(h)) + ' family</b>' +
+    '<span class="k"><i class="ico-fill" style="background:' + col + '"></i>' + c.shown.toLocaleString() + ' show it</span>' +
+    '<span class="k"><i class="ico-ring" style="color:' + col + '"></i>' + c.hidden.toLocaleString() + ' carry it hidden</span>' +
+    '<button id="pillX" aria-label="Clear highlight">&#x2715;</button>';
+  pill.classList.add('open');
+}
+$('pill').addEventListener('click', (e) => { if (e.target.closest('#pillX')) setHighlight(S.highlight); });
+
+function renderRail() {
+  const c = S.census, A = S.world.alleles, top = c.living.slice(0, 14), max = Math.max(1, ...top.map((l) => l.copies));
+  $('rail').classList.toggle('off', S.linOpen);
+  $('rail').innerHTML = top.map((l) => {
+    const d = 10 + 18 * Math.sqrt(l.copies / max), col = P.css(A.hue[l.id]), hidden = l.showing === 0;
+    const t = hueName(A.hue[l.id]) + ': ' + Math.max(1, Math.round((100 * l.copies) / (2 * c.population))) + '% of genes' + (hidden ? ', hidden in every carrier' : '');
+    return '<button class="chip ' + (hidden ? 'hidden' : '') + ' ' + (S.highlight === l.id ? 'sel' : '') + '" data-id="' + l.id + '" title="' + t + '" style="width:' + d + 'px;height:' + d + 'px;background:' + col + ';border-color:' + col + '"></button>';
+  }).join('');
+}
+$('rail').addEventListener('click', (e) => { const b = e.target.closest('.chip'); if (b) setHighlight(+b.dataset.id); });
+
+function render() {
+  const c = S.census, w = S.world;
+  $('play').innerHTML = S.running ? ICON.pause : ICON.play;
+  const gen = 'gen ' + w.generation.toLocaleString() + ' · ' + c.population.toLocaleString() + ' alive';
+  $('gen').textContent = gen; $('pgen').textContent = 'gen ' + w.generation.toLocaleString();
+  const sp = SPEEDS[S.speed];
+  $('speed').textContent = sp.label;
+  $('speed').title = 'Speed ' + sp.label + ' (' + sp.gps + ' generations/s). Click for faster, Shift+click for slower ([ ])';
+  $('stats').innerHTML = '<div><b>' + w.generation.toLocaleString() + '</b><span>generation</span></div><div><b>' + c.population.toLocaleString() + '</b><span>alive</span></div>' +
+    '<div><b>' + c.living.length + '</b><span>colour genes</span></div><div><b>' + c.hidden + '</b><span>hidden everywhere</span></div>';
+  $('mrv').textContent = (w.mutationRate * 100).toFixed(1) + '%';
+  $('mmv').textContent = '±' + w.mutationMagnitude + '°';
+  $('bhv').style.background = P.css(S.brushHue); $('dot').style.background = P.css(S.brushHue);
+  renderRail(); renderPill(); renderCard(); drawChart();
+}
+S.listeners.add(render);
+
+function setTool(t) { S.tool = t; $('look').classList.toggle('on', t === 'look'); $('paint').classList.toggle('on', t === 'paint'); $('world').classList.toggle('paint', t === 'paint'); if (t === 'paint') closeCard(); }
+function setDocked(d) {
+  S.docked = d;
+  $('app').classList.toggle('docked', d);
+  if (d) { $('dockSlot').appendChild($('dock')); $('linSlot').appendChild($('lineage')); $('setSlot').appendChild($('settings')); }
+  else { $('stage').appendChild($('dock')); $('linFloat').appendChild($('lineage')); $('popFloat').appendChild($('settings')); }
+  $('dockBtn').innerHTML = d ? ICON.dockFloat : ICON.dockSide;
+  $('dockBtn').title = d ? 'Float the toolbar (D)' : 'Dock to the side (D)';
+  const url = new URL(location.href); if (d) url.searchParams.set('dock', 'side'); else url.searchParams.delete('dock'); history.replaceState(null, '', url);
+  render();
+  setTimeout(drawChart, 360);
+}
+$('step').innerHTML = ICON.step; $('look').insertAdjacentHTML('afterbegin', ICON.hand);
+$('zo').innerHTML = ICON.minus; $('zi').innerHTML = ICON.plus; $('new').innerHTML = ICON.shuffle; $('lin').innerHTML = ICON.lineage; $('set').innerHTML = ICON.gear;
+$('play').onclick = () => { S.running = !S.running; render(); };
+$('step').onclick = () => { S.running = false; Genetics.step(S.world); refreshCensus(); R.markDirty(); emit(); };
+function setSpeed(i) { S.speed = (i + SPEEDS.length) % SPEEDS.length; S.gps = SPEEDS[S.speed].gps; render(); }
+$('speed').onclick = (e) => setSpeed(S.speed + (e.shiftKey ? -1 : 1));
+$('speed').oncontextmenu = (e) => { e.preventDefault(); setSpeed(S.speed - 1); };
+$('look').onclick = () => setTool('look');
+$('paint').onclick = () => setTool('paint');
+$('zi').onclick = () => R.zoom(1); $('zo').onclick = () => R.zoom(-1);
+$('new').onclick = () => { newWorld({ rule: $('rule').value, mutationRate: +$('mr').value / 1000, mutationMagnitude: +$('mm').value }); R.recenter(); R.markDirty(); };
+$('lin').onclick = () => { S.linOpen = !S.linOpen; $('linFloat').classList.toggle('open', S.linOpen); $('lin').classList.toggle('on', S.linOpen); render(); };
+$('set').onclick = () => { S.setOpen = !S.setOpen; $('popFloat').classList.toggle('open', S.setOpen); $('set').classList.toggle('on', S.setOpen); };
+$('dockBtn').onclick = () => setDocked(!S.docked);
+$('rule').value = S.world.rule.text; $('rule').onchange = (e) => { S.world.rule = Genetics.parseRule(e.target.value); };
+$('mr').value = Math.round(S.world.mutationRate * 1000); $('mr').oninput = (e) => { S.world.mutationRate = +e.target.value / 1000; render(); };
+$('mm').value = S.world.mutationMagnitude; $('mm').oninput = (e) => { S.world.mutationMagnitude = +e.target.value; render(); };
+$('bh').value = S.brushHue; $('bh').oninput = (e) => { S.brushHue = +e.target.value; render(); };
+$('bh').style.setProperty('--hue-track', Array.from({ length: 13 }, (_, k) => P.css(k * 30)).join(','));
+new ResizeObserver(() => drawChart()).observe(chart);
+setTimeout(() => $('hint').classList.add('gone'), 9000);
+
+let lastT = 0;
+function loop(t) {
+  const dt = Math.min(0.1, (t - lastT) / 1000); lastT = t;
+  if (S.running) {
+    S.acc += dt * S.gps;
+    const n = Math.min(Math.floor(S.acc), 10);
+    S.acc -= Math.floor(S.acc);
+    for (let k = 0; k < n; k++) Genetics.step(S.world);
+    if (n) { R.markDirty(); if (t - S.lastCensus > 200) { refreshCensus(); emit(); } }
+  }
+  if (R.frame()) { positionCard(); if (S.highlight >= 0) renderPill(); }
+  requestAnimationFrame(loop);
+}
+
+const KEYS = Object.keys(MODES);
+function mount(key) {
+  if (!MODES[key]) key = '1';
+  S.mode = MODES[key].key; R.modeChanged();
+  const url = new URL(location.href); url.searchParams.set('variant', key); history.replaceState(null, '', url);
+  $('vlabel').textContent = key + ' (' + MODES[key].name + ')';
+  $('switcher').dataset.key = key;
+}
+function cycle(d) { const k = $('switcher').dataset.key; mount(KEYS[(KEYS.indexOf(k) + d + KEYS.length) % KEYS.length]); }
+$('prev').onclick = () => cycle(-1); $('next').onclick = () => cycle(1);
+document.addEventListener('keydown', (e) => {
+  if (e.target.matches && e.target.matches('input, textarea, select, [contenteditable]')) return;
+  if (e.key === 'ArrowLeft') cycle(-1);
+  else if (e.key === 'ArrowRight') cycle(1);
+  else if (e.code === 'Space') { e.preventDefault(); S.running = !S.running; render(); }
+  else if (e.key === '.') $('step').click();
+  else if (e.key === ']') setSpeed(Math.min(S.speed + 1, SPEEDS.length - 1));
+  else if (e.key === '[') setSpeed(Math.max(S.speed - 1, 0));
+  else if (e.key === 'd' || e.key === 'D') setDocked(!S.docked);
+  else if (e.key === 'Escape') { if (S.inspect) closeCard(); else if (S.highlight >= 0) setHighlight(S.highlight); }
+});
+const q = new URLSearchParams(location.search);
+mount(q.get('variant') || '1');
+setTool('look');
+setDocked(q.get('dock') === 'side');
+requestAnimationFrame((t) => { lastT = t; requestAnimationFrame(loop); });
+</script>
+</body>
+</html>
