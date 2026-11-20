@@ -5,7 +5,7 @@ export interface SimulationHandlers {
   /** The Rule now running, in canonical notation. */
   rule(rule: string): void;
   /** A Rule the core refused, with its explanation. */
-  ruleRejected(rule: string, message: string): void;
+  ruleRejected(rejected: { rule: string; message: string }): void;
   error(message: string): void;
 }
 
@@ -25,7 +25,7 @@ export class Simulation {
           handlers.rule(message.rule);
           break;
         case 'rule-rejected':
-          handlers.ruleRejected(message.rule, message.message);
+          handlers.ruleRejected({ rule: message.rule, message: message.message });
           break;
         case 'error':
           handlers.error(message.message);

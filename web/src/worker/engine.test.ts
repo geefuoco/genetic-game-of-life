@@ -15,7 +15,7 @@ const SOUP: SoupSettings = { seed: 42n, rule: 'B3/S23', width: 160, height: 160,
 const LIFE_WITHOUT_DEATH = 'B3/S012345678';
 
 function createWebWorld(soup: SoupSettings): WebWorld {
-  return new WebWorld(soup.seed, soup.width, soup.height, soup.density, soup.foundingAlleles, soup.rule, soup.mutation.rate, soup.mutation.magnitude);
+  return new WebWorld(soup.seed, soup.width, soup.height, soup.density, soup.foundingAlleles);
 }
 
 function isNonDecreasing(values: number[]): boolean {
@@ -91,7 +91,7 @@ function harness(options: { keepUp?: boolean } = {}): Harness {
       population: () => world.population(),
       phenotypes: (out) => world.phenotypes(out),
       setRule: (rule) => world.setRule(rule),
-      setMutation: (mutation) => world.setMutation(mutation.rate, mutation.magnitude),
+      setMutation: (rate, magnitude) => world.setMutation(rate, magnitude),
       free: () => world.free(),
     };
   };
@@ -141,6 +141,8 @@ function start(h: Harness, rate: Rate = 15, running = true, soup = SOUP): void {
 
 function referencePhenotypes(soup: SoupSettings, generations: number): Float32Array {
   const world = createWebWorld(soup);
+  world.setRule(soup.rule);
+  world.setMutation(soup.mutation.rate, soup.mutation.magnitude);
   world.step(generations);
   const out = new Float32Array(soup.width * soup.height);
   world.phenotypes(out);
@@ -166,6 +168,13 @@ describe('starting', () => {
     start(h, 15, true, { ...SOUP, width: 8 });
     expect(h.frames).toHaveLength(0);
     expect(h.errors[0]).toMatch(/size 8x160/);
+  });
+
+  it('reports a Soup whose Rule the core rejects as an error', () => {
+    const h = harness();
+    start(h, 15, true, { ...SOUP, rule: 'B9/S23' });
+    expect(h.frames).toHaveLength(0);
+    expect(h.errors).toEqual(['neighbour count 9 is too large, the maximum is 8']);
   });
 
   it('replaces the running World when started again', () => {

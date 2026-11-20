@@ -5,7 +5,7 @@
     SIZE_PRESETS,
     densityLabel,
     mutationRateLabel,
-    mutationReachLabel,
+    mutationMagnitudeLabel,
     presetOf,
     readSoupDraft,
     type NewSoup,
@@ -30,7 +30,7 @@
   const id = $props.id();
   const CUSTOM = '';
 
-  let ruleText = $derived(rule.rejected?.rule ?? rule.running);
+  let notation = $derived(rule.rejected?.rule ?? rule.running);
   const preset = $derived(presetOf(rule.running));
   let problems = $state<Partial<Record<SoupField, string>>>({});
 
@@ -41,7 +41,7 @@
 
   function applyRule(event: SubmitEvent): void {
     event.preventDefault();
-    onrule(ruleText.trim());
+    onrule(notation.trim());
   }
 
   function startSoup(event: SubmitEvent): void {
@@ -82,7 +82,7 @@
         type="text"
         spellcheck="false"
         autocomplete="off"
-        bind:value={ruleText}
+        bind:value={notation}
         aria-invalid={rule.rejected !== null}
         aria-describedby={rule.rejected ? `${id}-rule-problem` : undefined}
       />
@@ -114,10 +114,10 @@
       min="5"
       max="90"
       value={mutation.magnitude}
-      aria-valuetext={mutationReachLabel(mutation.magnitude)}
+      aria-valuetext={mutationMagnitudeLabel(mutation.magnitude)}
       oninput={(event) => onmutation({ ...mutation, magnitude: Number(event.currentTarget.value) })}
     />
-    <output for="{id}-reach">{mutationReachLabel(mutation.magnitude)}</output>
+    <output for="{id}-reach">{mutationMagnitudeLabel(mutation.magnitude)}</output>
   </label>
 
   <form class="soup" aria-labelledby="{id}-soup" onsubmit={startSoup} novalidate>

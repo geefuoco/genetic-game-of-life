@@ -1,12 +1,5 @@
 import { expect, test, type FrameLocator, type Page } from '@playwright/test';
-
-async function stats(scope: Page | FrameLocator): Promise<{ generation: number; population: number }> {
-  const text = (await scope.getByTestId('stats').textContent()) ?? '';
-  const match = /gen ([\d,]+) · ([\d,]+) alive/.exec(text);
-  if (!match) throw new Error(`unexpected stats line: ${text}`);
-  const number = (digits: string | undefined): number => Number((digits ?? '').replaceAll(',', ''));
-  return { generation: number(match[1]), population: number(match[2]) };
-}
+import { stats } from './stats.ts';
 
 const generation = async (scope: Page | FrameLocator): Promise<number> => (await stats(scope)).generation;
 

@@ -1,12 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
-
-async function stats(page: Page): Promise<{ generation: number; population: number }> {
-  const text = (await page.getByTestId('stats').textContent()) ?? '';
-  const match = /gen ([\d,]+) · ([\d,]+) alive/.exec(text);
-  if (!match) throw new Error(`unexpected stats line: ${text}`);
-  const number = (digits: string | undefined): number => Number((digits ?? '').replaceAll(',', ''));
-  return { generation: number(match[1]), population: number(match[2]) };
-}
+import { stats } from './stats.ts';
 
 /** Opens the page, waits for it to run, then pauses and waits for any frame in flight. */
 async function openPaused(page: Page): Promise<void> {
@@ -66,7 +59,7 @@ test('changes the Rule mid-run from a Rule Preset or custom notation, keeping it
   await expect(settings.getByRole('alert')).toHaveCount(0);
 });
 
-test('starts a new Soup with the chosen size, density, colour genes and Seed', async ({ page }) => {
+test('starts a new Soup with the chosen size, density, Founding Alleles and Seed', async ({ page }) => {
   await openPaused(page);
   const settings = await openSettings(page);
   const width = settings.getByRole('spinbutton', { name: 'Width' });
@@ -147,15 +140,13 @@ test('settings open from the keyboard, every control in them is labelled, and Es
   await page.keyboard.press('Enter');
   const settings = page.getByRole('dialog', { name: 'Settings' });
   await expect(settings.getByRole('combobox', { name: 'Rule', exact: true })).toBeFocused();
-  const names: string[] = [];
-  for (;;) {
-    const focused = page.locator(':focus');
-    if ((await settings.locator(':focus').count()) === 0) break;
-    await expect(focused).toHaveAccessibleName(/\S/);
-    names.push(await focused.evaluate((element) => element.id || element.textContent || ''));
+  let reached = 0;
+  while ((await settings.locator(':focus').count()) > 0) {
+    await expect(page.locator(':focus')).toHaveAccessibleName(/\S/);
+    reached++;
     await page.keyboard.press('Tab');
   }
-  expect(names.length).toBeGreaterThanOrEqual(14);
+  expect(reached).toBe(await settings.locator('select, input, button').count());
   await settings.getByRole('textbox', { name: 'Seed' }).focus();
   await page.keyboard.press('Escape');
   await expect(settings).toBeHidden();

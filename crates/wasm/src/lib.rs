@@ -13,28 +13,24 @@ pub struct WebWorld {
 
 #[wasm_bindgen]
 impl WebWorld {
-    /// Creates a Soup running `rule`, given in B/S notation, with these
-    /// Mutation settings.
+    /// Creates a Soup under Conway's Life with the default Mutation settings;
+    /// `setRule` and `setMutation` change them before or during the run.
     #[wasm_bindgen(constructor)]
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         seed: u64,
         width: usize,
         height: usize,
         density: f64,
         founding_alleles: usize,
-        rule: &str,
-        mutation_rate: f64,
-        mutation_magnitude: f64,
     ) -> Result<WebWorld, JsError> {
         let soup = Soup {
             seed,
-            rule: Rule::parse(rule).map_err(js_error)?,
+            rule: Rule::CONWAY,
             width,
             height,
             density,
             founding_alleles,
-            mutation: MutationSettings::new(mutation_rate, mutation_magnitude).map_err(js_error)?,
+            mutation: MutationSettings::default(),
         };
         let world = soup.world().map_err(js_error)?;
         Ok(Self { world })

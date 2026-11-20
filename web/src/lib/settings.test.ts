@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { densityLabel, mutationRateLabel, mutationReachLabel, presetOf, readSoupDraft, type SoupDraft } from './settings.ts';
+import { densityLabel, mutationRateLabel, mutationMagnitudeLabel, presetOf, readSoupDraft, type SoupDraft } from './settings.ts';
 
 describe('Rule Presets', () => {
   it('names the Rule Preset a canonical notation belongs to', () => {
@@ -20,7 +20,7 @@ describe('value labels', () => {
   });
 
   it('show the Mutation magnitude as a reach either way, in degrees', () => {
-    expect(mutationReachLabel(30)).toBe('±30°');
+    expect(mutationMagnitudeLabel(30)).toBe('±30°');
   });
 
   it('show density as a whole percentage', () => {

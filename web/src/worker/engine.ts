@@ -1,4 +1,4 @@
-import type { Command, MutationSettings, Rate, SoupSettings, WorkerEvent } from '../protocol.ts';
+import type { Command, Rate, SoupSettings, WorkerEvent } from '../protocol.ts';
 
 /** The World as the engine drives it; in the worker, the WASM `WebWorld`. */
 export interface EngineWorld {
@@ -8,7 +8,8 @@ export interface EngineWorld {
   phenotypes(out: Float32Array): void;
   /** Switches to a Rule in B/S notation and returns it in canonical notation; throws the core's explanation if it is invalid. */
   setRule(rule: string): string;
-  setMutation(mutation: MutationSettings): void;
+  /** Switches the Mutation settings; throws the core's explanation if they are out of range. */
+  setMutation(rate: number, magnitude: number): void;
   free(): void;
 }
 
@@ -20,6 +21,7 @@ export interface Clock {
 }
 
 export interface EngineOptions {
+  /** The World a Soup describes; the engine applies its Rule and Mutation settings after creating it. */
   createWorld(soup: SoupSettings): EngineWorld;
   clock: Clock;
   send(event: WorkerEvent, transfer: Transferable[]): void;
@@ -86,7 +88,7 @@ export class Engine {
         this.setRule(command.rule);
         break;
       case 'set-mutation':
-        this.world?.setMutation(command.mutation);
+        this.world?.setMutation(command.mutation.rate, command.mutation.magnitude);
         break;
       case 'release':
         if (command.phenotypes.length === this.cells) {
@@ -104,12 +106,17 @@ export class Engine {
     this.cells = 0;
     this.free = [];
     this.framePending = false;
+    let world: EngineWorld | null = null;
     try {
-      this.world = this.options.createWorld(soup);
+      world = this.options.createWorld(soup);
+      world.setRule(soup.rule);
+      world.setMutation(soup.mutation.rate, soup.mutation.magnitude);
     } catch (error) {
+      world?.free();
       this.options.send({ type: 'error', message: messageOf(error) }, []);
       return;
     }
+    this.world = world;
     this.width = soup.width;
     this.height = soup.height;
     this.cells = soup.width * soup.height;

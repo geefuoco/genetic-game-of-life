@@ -42,8 +42,8 @@ export function mutationRateLabel(rate: number): string {
   return `${(rate * 100).toFixed(1)}%`;
 }
 
-/** A Mutation magnitude as the settings show it, such as "±30°". */
-export function mutationReachLabel(magnitude: number): string {
+/** A Mutation magnitude as the settings show it, a reach either way such as "±30°". */
+export function mutationMagnitudeLabel(magnitude: number): string {
   return `±${magnitude}°`;
 }
 

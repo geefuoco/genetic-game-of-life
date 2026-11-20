@@ -149,8 +149,8 @@
       rule: (running) => {
         rule = { running, rejected: null };
       },
-      ruleRejected: (attempt, message) => {
-        rule = { running: rule.running, rejected: { rule: attempt, message } };
+      ruleRejected: (rejected) => {
+        rule = { running: rule.running, rejected };
       },
       error: (message) => {
         problem = message;
