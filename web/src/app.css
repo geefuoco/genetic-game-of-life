@@ -1,0 +1,58 @@
+:root {
+  --background: #06070a;
+  --text: #e9ebf1;
+  --muted: #8b91a1;
+  --glass: rgb(19 21 28 / 80%);
+  --line: rgb(255 255 255 / 7%);
+  --panel-width: 340px;
+
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font:
+    400 13px/1.4 'Inter Variable',
+    system-ui,
+    sans-serif;
+  font-feature-settings: 'tnum';
+  color: var(--text);
+  background: var(--background);
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  background: none;
+  border: 0;
+}
+
+button:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+.glass {
+  background: var(--glass);
+  border: 1px solid var(--line);
+  box-shadow: 0 12px 40px rgb(0 0 0 / 45%);
+  backdrop-filter: blur(16px) saturate(1.2);
+}

@@ -1,0 +1,18 @@
+[package]
+name = "genetic-life-wasm"
+description = "wasm-bindgen bindings exposing the core World to the web app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[lints]
+workspace = true
+
+[dependencies]
+genetic-life-core = { path = "../core" }
+wasm-bindgen = "0.2"

@@ -430,6 +430,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "genetic-life-wasm"
+version = "0.1.0"
+dependencies = [
+ "genetic-life-core",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "getrandom"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

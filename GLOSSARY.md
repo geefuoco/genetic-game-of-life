@@ -123,3 +123,15 @@ _Avoid_: Permalink, share code
 **Snapshot**:
 A complete, exportable record of a World's state at one Generation, sufficient to resume the run exactly.
 _Avoid_: Save, dump, state file
+
+### UI copy
+
+Friendlier words the app may show players in place of glossary terms. Code, docs and issues keep the glossary terms.
+
+| UI copy | Glossary term |
+| --- | --- |
+| colour gene | Allele (of the Pigment Gene) |
+| a colour name, such as "orange" | an Allele or Phenotype whose hue falls in that colour's range |
+| colour | Phenotype |
+| gen | Generation |
+| alive | live Cells |
