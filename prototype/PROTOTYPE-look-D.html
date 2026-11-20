@@ -7,7 +7,11 @@
 <!--
   PROTOTYPE, throwaway. Look direction D for #9: A's dock and open screen, a dock-to-side panel,
   rounded cells, a hue-over-time Lineage chart, and a clearer cell popup.
-  Variants (?variant=1|2|3) answer one question: how to bound the World without showing tiled copies.
+  Bottom bar (?palette=1|2|3) compares palettes for more colour variety (#9 Q10), with 8 Founding Alleles. 2 was chosen:
+    1 Fixed L/C          - current: every hue at OKLCH L 0.76, C 0.17
+    2 Natural lightness  - lightness follows the hue like natural colours (yellow light, blue dark), chroma near the gamut edge
+    3 Lightness rhythm   - lightness rises and falls four times around the wheel, so nearby hues differ in lightness too
+  Edge variants (?variant=1|2|3, URL only now; 1 was chosen) answer: how to bound the World without showing tiled copies.
     1 Feathered window   - exactly one copy, edges fade to dark, panning scrolls the torus inside it
     2 Frosted surround   - same window, the wrapped continuation shows outside it, blurred and dimmed
     3 Free camera        - classic wrapped camera, but zoom-out stops before a second copy is visible
@@ -402,12 +406,26 @@ const S = {
   listeners: new Set(), mode: 'window', docked: false, linOpen: false, setOpen: false, inspect: null,
 };
 
-function makePalette(L, C) {
-  const t = new Uint32Array(720);
-  for (let i = 0; i < 720; i++) { const [r, g, b] = Genetics.oklchToRgb(L, C, i / 2); t[i] = (255 << 24) | (b << 16) | (g << 8) | r; }
-  return { css: (h) => { const [r, g, b] = Genetics.oklchToRgb(L, C, h); return 'rgb(' + r + ',' + g + ',' + b + ')'; }, at: (h) => t[Math.floor(h * 2) % 720] };
+// Palette candidates for #9 Q10. Each maps a hue to OKLCH lightness and chroma.
+const rad = (d) => (d * Math.PI) / 180;
+function inGamut(L, C, hDeg) {
+  const a = C * Math.cos(rad(hDeg)), b = C * Math.sin(rad(hDeg));
+  const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3, m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3, s = (L - 0.0894841775 * a - 1.291485548 * b) ** 3;
+  return [4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s, -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s, -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s].every((v) => v >= 0 && v <= 1);
 }
-const P = makePalette(0.76, 0.17);
+function maxChroma(L, h) { let lo = 0, hi = 0.4; for (let k = 0; k < 18; k++) { const mid = (lo + hi) / 2; if (inGamut(L, mid, h)) lo = mid; else hi = mid; } return lo; }
+const vivid = (L, h) => [L, Math.min(0.25, 0.92 * maxChroma(L, h))];
+const PALETTES = {
+  1: { name: 'Fixed L/C (current)', lc: () => [0.76, 0.17] },
+  2: { name: 'Natural lightness', lc: (h) => vivid(0.75 + 0.11 * Math.cos(rad(h - 105)), h) },
+  3: { name: 'Lightness rhythm', lc: (h) => vivid(0.74 + 0.09 * Math.cos(rad(4 * (h - 105))), h) },
+};
+const P = { t: new Uint32Array(720), c: new Array(720), at(h) { return this.t[Math.floor(h * 2) % 720]; }, css(h) { return this.c[Math.floor(h * 2) % 720]; } };
+function setPalette(key) {
+  const f = PALETTES[key].lc;
+  for (let i = 0; i < 720; i++) { const [L, C] = f(i / 2), [r, g, b] = Genetics.oklchToRgb(L, C, i / 2); P.t[i] = (255 << 24) | (b << 16) | (g << 8) | r; P.c[i] = 'rgb(' + r + ',' + g + ',' + b + ')'; }
+}
+setPalette(new URLSearchParams(location.search).get('palette') in PALETTES ? new URLSearchParams(location.search).get('palette') : '2');
 const rgba = (r, g, b) => (255 << 24) | (b << 16) | (g << 8) | r;
 
 const HUE_NAMES = [[0, 'rose'], [29, 'red'], [50, 'orange'], [75, 'amber'], [100, 'yellow'], [123, 'lime'], [145, 'green'], [165, 'jade'], [186, 'teal'], [207, 'cyan'], [232, 'sky'], [262, 'blue'], [285, 'indigo'], [305, 'violet'], [324, 'purple'], [344, 'pink']];
@@ -419,7 +437,7 @@ function hueName(h) {
 const cap = (s) => s[0].toUpperCase() + s.slice(1);
 const sw = (h) => '<span class="sw" style="background:' + P.css(h) + '"></span>';
 
-function newWorld({ size = 160, seed = (Date.now() & 0x7fffffff), founders = 3, density = 0.3, rule = 'B3/S23', mutationRate = 0.01, mutationMagnitude = 30 } = {}) {
+function newWorld({ size = 160, seed = (Date.now() & 0x7fffffff), founders = 8, density = 0.3, rule = 'B3/S23', mutationRate = 0.01, mutationMagnitude = 30 } = {}) {
   const w = Genetics.create({ size, seed, rule, mutationRate, mutationMagnitude });
   const base = seed % 360, doms = [2, 1, 0, 3, 1, 2], ids = [];
   for (let k = 0; k < founders; k++) ids.push(Genetics.addFounder(w, { name: null, hue: base + (k * 360) / founders, dominance: doms[k % doms.length] }));
@@ -849,7 +867,8 @@ $('rule').value = S.world.rule.text; $('rule').onchange = (e) => { S.world.rule 
 $('mr').value = Math.round(S.world.mutationRate * 1000); $('mr').oninput = (e) => { S.world.mutationRate = +e.target.value / 1000; render(); };
 $('mm').value = S.world.mutationMagnitude; $('mm').oninput = (e) => { S.world.mutationMagnitude = +e.target.value; render(); };
 $('bh').value = S.brushHue; $('bh').oninput = (e) => { S.brushHue = +e.target.value; render(); };
-$('bh').style.setProperty('--hue-track', Array.from({ length: 13 }, (_, k) => P.css(k * 30)).join(','));
+function syncHueTrack() { $('bh').style.setProperty('--hue-track', Array.from({ length: 13 }, (_, k) => P.css((k * 30) % 360)).join(',')); }
+syncHueTrack();
 new ResizeObserver(() => drawChart()).observe(chart);
 setTimeout(() => $('hint').classList.add('gone'), 9000);
 
@@ -867,12 +886,17 @@ function loop(t) {
   requestAnimationFrame(loop);
 }
 
-const KEYS = Object.keys(MODES);
-function mount(key) {
+const KEYS = Object.keys(PALETTES);
+function mountEdge(key) {
   if (!MODES[key]) key = '1';
   S.mode = MODES[key].key; R.modeChanged();
   const url = new URL(location.href); url.searchParams.set('variant', key); history.replaceState(null, '', url);
-  $('vlabel').textContent = key + ' (' + MODES[key].name + ')';
+}
+function mount(key) {
+  if (!PALETTES[key]) key = '1';
+  setPalette(key); R.markDirty(); syncHueTrack(); render();
+  const url = new URL(location.href); url.searchParams.set('palette', key); history.replaceState(null, '', url);
+  $('vlabel').textContent = 'Palette ' + key + ' (' + PALETTES[key].name + ')';
   $('switcher').dataset.key = key;
 }
 function cycle(d) { const k = $('switcher').dataset.key; mount(KEYS[(KEYS.indexOf(k) + d + KEYS.length) % KEYS.length]); }
@@ -889,7 +913,8 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === 'Escape') { if (S.inspect) closeCard(); else if (S.highlight >= 0) setHighlight(S.highlight); }
 });
 const q = new URLSearchParams(location.search);
-mount(q.get('variant') || '1');
+mountEdge(q.get('variant') || '1');
+mount(q.get('palette') || '2');
 setTool('look');
 setDocked(q.get('dock') === 'side');
 requestAnimationFrame((t) => { lastT = t; requestAnimationFrame(loop); });
