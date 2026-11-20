@@ -2,9 +2,10 @@
 //! steps and reads Phenotypes from.
 
 use genetic_life_core::{MutationSettings, Rule, Soup, World};
+use std::fmt::Display;
 use wasm_bindgen::prelude::*;
 
-/// A Soup World running Conway's Life, driven from JavaScript.
+/// A Soup World, driven from JavaScript.
 #[wasm_bindgen]
 pub struct WebWorld {
     world: World,
@@ -12,28 +13,49 @@ pub struct WebWorld {
 
 #[wasm_bindgen]
 impl WebWorld {
-    /// Creates a Soup under Conway's Life with the default Mutation settings.
+    /// Creates a Soup running `rule`, given in B/S notation, with these
+    /// Mutation settings.
     #[wasm_bindgen(constructor)]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         seed: u64,
         width: usize,
         height: usize,
         density: f64,
         founding_alleles: usize,
+        rule: &str,
+        mutation_rate: f64,
+        mutation_magnitude: f64,
     ) -> Result<WebWorld, JsError> {
         let soup = Soup {
             seed,
-            rule: Rule::CONWAY,
+            rule: Rule::parse(rule).map_err(js_error)?,
             width,
             height,
             density,
             founding_alleles,
-            mutation: MutationSettings::default(),
+            mutation: MutationSettings::new(mutation_rate, mutation_magnitude).map_err(js_error)?,
         };
-        let world = soup
-            .world()
-            .map_err(|error| JsError::new(&error.to_string()))?;
+        let world = soup.world().map_err(js_error)?;
         Ok(Self { world })
+    }
+
+    /// Switches to `rule`, given in B/S notation, from the next Generation on,
+    /// and returns it in canonical notation. Invalid notation leaves the Rule
+    /// unchanged and fails with the core's explanation.
+    #[wasm_bindgen(js_name = setRule)]
+    pub fn set_rule(&mut self, rule: &str) -> Result<String, JsError> {
+        let rule = Rule::parse(rule).map_err(js_error)?;
+        self.world.set_rule(rule);
+        Ok(rule.to_string())
+    }
+
+    /// Switches the Mutation settings from the next Generation on.
+    #[wasm_bindgen(js_name = setMutation)]
+    pub fn set_mutation(&mut self, rate: f64, magnitude: f64) -> Result<(), JsError> {
+        let mutation = MutationSettings::new(rate, magnitude).map_err(js_error)?;
+        self.world.set_mutation(mutation);
+        Ok(())
     }
 
     /// Applies the Rule `generations` times.
@@ -67,4 +89,8 @@ impl WebWorld {
         }
         Ok(())
     }
+}
+
+fn js_error(error: impl Display) -> JsError {
+    JsError::new(&error.to_string())
 }

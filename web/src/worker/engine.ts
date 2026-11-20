@@ -1,4 +1,4 @@
-import type { Command, Rate, SoupSettings, WorkerEvent } from '../protocol.ts';
+import type { Command, MutationSettings, Rate, SoupSettings, WorkerEvent } from '../protocol.ts';
 
 /** The World as the engine drives it; in the worker, the WASM `WebWorld`. */
 export interface EngineWorld {
@@ -6,6 +6,9 @@ export interface EngineWorld {
   generation(): number;
   population(): number;
   phenotypes(out: Float32Array): void;
+  /** Switches to a Rule in B/S notation and returns it in canonical notation; throws the core's explanation if it is invalid. */
+  setRule(rule: string): string;
+  setMutation(mutation: MutationSettings): void;
   free(): void;
 }
 
@@ -79,6 +82,12 @@ export class Engine {
         this.rate = command.rate;
         if (this.running) this.restartPace();
         break;
+      case 'set-rule':
+        this.setRule(command.rule);
+        break;
+      case 'set-mutation':
+        this.world?.setMutation(command.mutation);
+        break;
       case 'release':
         if (command.phenotypes.length === this.cells) {
           this.free.push(command.phenotypes);
@@ -98,7 +107,7 @@ export class Engine {
     try {
       this.world = this.options.createWorld(soup);
     } catch (error) {
-      this.options.send({ type: 'error', message: error instanceof Error ? error.message : String(error) }, []);
+      this.options.send({ type: 'error', message: messageOf(error) }, []);
       return;
     }
     this.width = soup.width;
@@ -111,6 +120,18 @@ export class Engine {
       this.running = true;
       this.restartPace();
     }
+  }
+
+  private setRule(rule: string): void {
+    if (!this.world) return;
+    let running: string;
+    try {
+      running = this.world.setRule(rule);
+    } catch (error) {
+      this.options.send({ type: 'rule-rejected', rule, message: messageOf(error) }, []);
+      return;
+    }
+    this.options.send({ type: 'rule', rule: running }, []);
   }
 
   private pause(): void {
@@ -192,4 +213,8 @@ export class Engine {
       [buffer.buffer],
     );
   }
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

@@ -3,6 +3,7 @@
     running: boolean;
     speed: string;
     docked: boolean;
+    settingsOpen: boolean;
     ontoggleplay: () => void;
     onstep: () => void;
     onfaster: () => void;
@@ -10,11 +11,18 @@
     onzoomin: () => void;
     onzoomout: () => void;
     ontoggledock: () => void;
+    ontogglesettings: () => void;
   }
 
-  let { running, speed, docked, ontoggleplay, onstep, onfaster, onslower, onzoomin, onzoomout, ontoggledock }: Props = $props();
+  let { running, speed, docked, settingsOpen, ontoggleplay, onstep, onfaster, onslower, onzoomin, onzoomout, ontoggledock, ontogglesettings }: Props = $props();
 
   let dockToggle: HTMLButtonElement;
+  let settingsToggle: HTMLButtonElement | undefined = $state();
+
+  /** Moves focus to the settings button, which only the floating dock has. */
+  export function focusSettingsToggle(): void {
+    settingsToggle?.focus();
+  }
 
   /** Moves focus to the dock toggle, which is recreated whenever the dock moves. */
   export function focusDockToggle(): void {
@@ -68,6 +76,24 @@
   </div>
   <span class="sep" aria-hidden="true"></span>
   <div class="group">
+    {#if !docked}
+      <button
+        type="button"
+        bind:this={settingsToggle}
+        class:on={settingsOpen}
+        aria-label="Settings"
+        title="Settings"
+        aria-expanded={settingsOpen}
+        aria-controls="settings-popover"
+        onclick={ontogglesettings}
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"
+          ><circle cx="8" cy="8" r="2.2" /><path
+            d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"
+          /></svg
+        >
+      </button>
+    {/if}
     <button
       type="button"
       bind:this={dockToggle}
@@ -115,7 +141,8 @@
       color 0.12s;
   }
 
-  button:hover {
+  button:hover,
+  button.on {
     color: #fff;
     background: rgb(255 255 255 / 8%);
   }

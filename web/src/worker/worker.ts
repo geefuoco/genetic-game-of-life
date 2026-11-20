@@ -9,7 +9,18 @@ const send = (event: WorkerEvent, transfer: Transferable[]): void => {
 const engineReady = init().then(
   () =>
     new Engine({
-      createWorld: (soup) => new WebWorld(soup.seed, soup.width, soup.height, soup.density, soup.foundingAlleles),
+      createWorld: (soup) => {
+        const world = new WebWorld(soup.seed, soup.width, soup.height, soup.density, soup.foundingAlleles, soup.rule, soup.mutation.rate, soup.mutation.magnitude);
+        return {
+          step: (generations) => world.step(generations),
+          generation: () => world.generation(),
+          population: () => world.population(),
+          phenotypes: (out) => world.phenotypes(out),
+          setRule: (rule) => world.setRule(rule),
+          setMutation: (mutation) => world.setMutation(mutation.rate, mutation.magnitude),
+          free: () => world.free(),
+        };
+      },
       clock: {
         now: () => performance.now(),
         setTimeout: (run, ms) => self.setTimeout(run, ms),
