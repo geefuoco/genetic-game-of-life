@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AlleleCensus } from '../protocol.ts';
-import { alleleRows, reducedHistory } from './census.ts';
+import { alleleRows, historyExtremes, reducedHistory } from './census.ts';
 
 function line(hue: number, shown: number, hidden: number, copies = shown + hidden): AlleleCensus {
   return { hue, dominance: 1, copies, shown, hidden };
@@ -10,8 +10,8 @@ describe('Allele rows', () => {
   it('compare how many live Cells carry each Allele with how many show it', () => {
     const { rows } = alleleRows([line(40, 30, 10), line(160, 0, 12)], 10);
     expect(rows).toEqual([
-      { hue: 40, dominance: 1, carried: 40, shown: 30, fullyHidden: false },
-      { hue: 160, dominance: 1, carried: 12, shown: 0, fullyHidden: true },
+      { hue: 40, carried: 40, shown: 30, fullyHidden: false },
+      { hue: 160, carried: 12, shown: 0, fullyHidden: true },
     ]);
   });
 
@@ -27,9 +27,9 @@ describe('Allele rows', () => {
   });
 
   it('count the living and the fully hidden Alleles, including those left out of the list', () => {
-    const { living, fullyHidden } = alleleRows([line(10, 0, 1), line(20, 9, 0), line(30, 0, 4)], 1);
-    expect(living).toBe(3);
-    expect(fullyHidden).toBe(2);
+    const { livingCount, fullyHiddenCount } = alleleRows([line(10, 0, 1), line(20, 9, 0), line(30, 0, 4)], 1);
+    expect(livingCount).toBe(3);
+    expect(fullyHiddenCount).toBe(2);
   });
 });
 
@@ -60,5 +60,14 @@ describe('the reduced population history', () => {
     const generations = points.map((point) => point.generation);
     expect(generations).toEqual([...generations].sort((a, b) => a - b));
     expect(new Set(generations).size).toBe(generations.length);
+  });
+});
+
+describe('the population history extremes', () => {
+  it('are the first Generations with the highest and lowest population', () => {
+    expect(historyExtremes([40, 90, 12, 90, 12, 50])).toEqual({
+      peak: { generation: 1, population: 90 },
+      lowest: { generation: 2, population: 12 },
+    });
   });
 });

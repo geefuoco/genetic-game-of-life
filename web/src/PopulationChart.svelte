@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { reducedHistory } from './lib/census.ts';
+  import { historyExtremes, reducedHistory } from './lib/census.ts';
 
   interface Props {
     /** The population at each Generation from 0 to the latest. */
@@ -11,7 +11,7 @@
   const id = $props.id();
   /** Chart height and the plot's inset from the chart's edges, in CSS pixels. */
   const HEIGHT = 120;
-  const INSET = { top: 8, right: 6, bottom: 4, left: 6 };
+  const INSET = { top: 18, right: 6, bottom: 4, left: 6 };
   /** Pixels per reduced history bucket. */
   const PIXELS_PER_BUCKET = 2;
   /** Share of the history one arrow key press moves the readout by. */
@@ -23,8 +23,9 @@
 
   const latest = $derived(Math.max(0, history.length - 1));
   const span = $derived(Math.max(1, latest));
-  const peak = $derived(extreme(history, (a, b) => a > b));
-  const low = $derived(extreme(history, (a, b) => a < b));
+  const extremes = $derived(historyExtremes(history));
+  const peak = $derived(extremes.peak);
+  const low = $derived(extremes.lowest);
   const top = $derived(Math.max(1, peak.population));
   const plotWidth = $derived(Math.max(1, width - INSET.left - INSET.right));
   const plotHeight = HEIGHT - INSET.top - INSET.bottom;
@@ -45,13 +46,6 @@
 
   function y(population: number): number {
     return INSET.top + (1 - population / top) * plotHeight;
-  }
-
-  /** The first Generation whose population beats every other by `beats`. */
-  function extreme(values: Uint32Array, beats: (a: number, b: number) => boolean): { generation: number; population: number } {
-    let generation = 0;
-    for (let i = 1; i < values.length; i++) if (beats(values[i] ?? 0, values[generation] ?? 0)) generation = i;
-    return { generation, population: values[generation] ?? 0 };
   }
 
   function onpointermove(event: PointerEvent): void {
@@ -76,8 +70,10 @@
     <span class="readout" data-testid="population-readout">{shownPopulation.toLocaleString()} alive · gen {shownGeneration.toLocaleString()}</span>
   </figcaption>
   <div class="plot" bind:clientWidth={width}>
+    <span class="peak" aria-hidden="true">peak {peak.population.toLocaleString()}</span>
     <svg role="img" aria-label={label} {width} height={HEIGHT} viewBox="0 0 {width} {HEIGHT}" {onpointermove} onpointerleave={() => (selected = null)}>
-      <line class="baseline" x1={INSET.left} x2={width - INSET.right} y1={y(0)} y2={y(0)} />
+      <line class="grid" x1={INSET.left} x2={width - INSET.right} y1={y(top)} y2={y(top)} />
+      <line class="grid" x1={INSET.left} x2={width - INSET.right} y1={y(0)} y2={y(0)} />
       <path class="area" d={area} />
       <path class="line" d={line} />
       {#if selected !== null}
@@ -100,7 +96,6 @@
   </div>
   <p class="axis" aria-hidden="true">
     <span>gen 0</span>
-    <span>peak {peak.population.toLocaleString()}</span>
     <span>now · gen {latest.toLocaleString()}</span>
   </p>
 </figure>
@@ -141,6 +136,15 @@
     outline-offset: 4px;
   }
 
+  .peak {
+    position: absolute;
+    top: 0;
+    right: 6px;
+    font-size: 10.5px;
+    color: #5f6575;
+    pointer-events: none;
+  }
+
   svg {
     display: block;
     overflow: visible;
@@ -155,7 +159,7 @@
     white-space: nowrap;
   }
 
-  .baseline {
+  .grid {
     stroke: var(--line);
     stroke-width: 1;
   }

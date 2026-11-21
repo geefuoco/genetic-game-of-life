@@ -171,18 +171,7 @@ impl WebWorld {
     /// and then, per Allele carried by a live Cell in id order, `[hue,
     /// dominance, copies, live Cells showing it, live Cells hiding it]`.
     pub fn census(&self) -> Vec<f64> {
-        let census = self.world.census();
-        let mut packed = vec![census.generation as f64, census.population as f64];
-        for line in &census.alleles {
-            packed.extend([
-                line.allele.hue,
-                f64::from(line.allele.dominance),
-                line.copies as f64,
-                line.shown as f64,
-                line.hidden as f64,
-            ]);
-        }
-        packed
+        packed_census(&self.world)
     }
 
     /// Number of live Cells at each Generation from 0 to the current one.
@@ -238,6 +227,21 @@ fn packed_inspection(inspection: &Inspection) -> Vec<f64> {
                 status,
             ]);
         }
+    }
+    packed
+}
+
+/// The census of `world` laid out as `WebWorld::census` documents.
+fn packed_census(world: &World) -> Vec<f64> {
+    let mut packed = vec![world.generation() as f64, world.population() as f64];
+    for line in world.living_alleles() {
+        packed.extend([
+            line.allele.hue,
+            f64::from(line.allele.dominance),
+            line.copies as f64,
+            line.shown as f64,
+            line.hidden as f64,
+        ]);
     }
     packed
 }

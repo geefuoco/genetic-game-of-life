@@ -314,7 +314,7 @@ export class Engine {
   }
 
   /** Sends a census of the current state if one is watched, held back until {@link CENSUS_MS} after the last. */
-  private censusChanged(): void {
+  private scheduleCensus(): void {
     if (!this.watchingCensus || this.censusTimer !== null) return;
     const wait = this.censusSentAt + CENSUS_MS - this.options.clock.now();
     if (wait <= 0) {
@@ -350,7 +350,7 @@ export class Engine {
 
   /** Sends the current state if the page has handed back a buffer, otherwise as soon as it does, and a census if one is due. */
   private publish(): void {
-    this.censusChanged();
+    this.scheduleCensus();
     const world = this.world;
     const buffer = this.free.pop();
     if (!world || !buffer) {
@@ -410,19 +410,18 @@ function unpackInspection(packed: Float64Array | undefined): Inspection | null {
   return { x, y, birthGeneration, deathGeneration: deathGeneration < 0 ? null : deathGeneration, phenotype, alleles };
 }
 
-/** Numbers the World packs per Allele in a census. */
-const CENSUS_ALLELE_LENGTH = 5;
-
-/** A census as the World packs it, unpacked; throws if it does not follow the packed layout. */
+/** A census as the World packs it, unpacked, with the population history; throws if it does not follow the packed layout. */
 function unpackCensus(packed: Float64Array, populationHistory: Uint32Array): Census {
-  const [generation, population] = packed;
-  if (generation === undefined || population === undefined || (packed.length - 2) % CENSUS_ALLELE_LENGTH !== 0) {
-    throw new Error(`a packed census of ${packed.length} numbers does not follow the census layout`);
-  }
+  let at = 0;
+  const next = (): number => {
+    const value = packed[at++];
+    if (value === undefined) throw new Error(`a packed census ends after ${packed.length} numbers`);
+    return value;
+  };
+  const [generation, population] = [next(), next()];
   const alleles: AlleleCensus[] = [];
-  for (let at = 2; at < packed.length; at += CENSUS_ALLELE_LENGTH) {
-    const [hue = 0, dominance = 0, copies = 0, shown = 0, hidden = 0] = packed.subarray(at, at + CENSUS_ALLELE_LENGTH);
-    alleles.push({ hue, dominance, copies, shown, hidden });
+  while (at < packed.length) {
+    alleles.push({ hue: next(), dominance: next(), copies: next(), shown: next(), hidden: next() });
   }
   return { type: 'census', generation, population, alleles, populationHistory };
 }

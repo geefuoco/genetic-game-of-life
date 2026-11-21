@@ -27,8 +27,7 @@ test('the stats panel is closed by default, and opens from the keyboard with the
   await page.keyboard.press('Space');
   await page.waitForTimeout(500);
   const line = await stats(page);
-  expect(await figure(region, 'generation')).toBe(line.generation);
-  expect(await figure(region, 'alive')).toBe(line.population);
+  await expect(region.getByTestId('population-readout')).toHaveText(`${line.population.toLocaleString('en-US')} alive · gen ${line.generation.toLocaleString('en-US')}`);
 
   await page.keyboard.press('d');
   await expect(statsRegion(page)).toBeHidden();
@@ -38,7 +37,7 @@ test('compares how many Cells carry and show each colour gene, marking one every
   await openPaused(page);
   await page.keyboard.press('d');
   const panel = page.getByRole('complementary', { name: 'Side panel' });
-  await page.waitForTimeout(500);
+  await expect(panel.getByRole('slider', { name: 'Density' })).toBeVisible();
   await panel.getByRole('slider', { name: 'Density' }).focus();
   await page.keyboard.press('Home');
   await panel.getByRole('slider', { name: 'Colour genes' }).focus();

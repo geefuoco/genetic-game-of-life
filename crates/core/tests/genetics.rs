@@ -168,6 +168,7 @@ fn census_reports_copies_shown_hidden_and_fully_hidden_alleles() {
         (3, 1, 1)
     );
     assert!(census.fully_hidden.is_empty());
+    assert_eq!(world.living_alleles(), census.alleles);
 }
 
 #[test]

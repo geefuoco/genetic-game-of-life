@@ -177,7 +177,7 @@
       type="button"
       bind:this={dockToggle}
       aria-label={docked ? 'Float the controls' : 'Dock the controls to the side'}
-      title={docked ? 'Float the controls (D)' : 'Dock the controls to the side, with stats (D)'}
+      title={docked ? 'Float the controls (D)' : 'Dock the controls to the side (D)'}
       onclick={ontoggledock}
     >
       {#if docked}

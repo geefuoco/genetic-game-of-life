@@ -15,39 +15,40 @@
   let { generation, population, census }: Props = $props();
 
   const id = $props.id();
-  /** Most colour genes listed; the rest are counted. */
+  /** Most Alleles listed; the rest are counted. */
   const LISTED = 12;
 
-  const genes = $derived(census && alleleRows(census.alleles, LISTED));
-  const widest = $derived(Math.max(1, ...(genes?.rows.map((row) => row.carried) ?? [])));
+  const alleles = $derived(census && alleleRows(census.alleles, LISTED));
+  const widest = $derived(Math.max(1, ...(alleles?.rows.map((row) => row.carried) ?? [])));
 
   function count(value: number | undefined): string {
     return value === undefined ? '–' : value.toLocaleString();
   }
 </script>
 
-<section class="stats" aria-label="Stats">
+<section class="stats" aria-labelledby="{id}-title">
+  <h2 id="{id}-title">Stats</h2>
   <dl class="figures">
     <div><dt>generation</dt><dd>{count(generation)}</dd></div>
     <div><dt>alive</dt><dd>{count(population)}</dd></div>
-    <div><dt>colour genes</dt><dd>{count(genes?.living)}</dd></div>
-    <div><dt>hidden everywhere</dt><dd>{count(genes?.fullyHidden)}</dd></div>
+    <div><dt>colour genes</dt><dd>{count(alleles?.livingCount)}</dd></div>
+    <div><dt>hidden everywhere</dt><dd>{count(alleles?.fullyHiddenCount)}</dd></div>
   </dl>
 
-  {#if genes && genes.rows.length > 0}
-    <div class="genes">
-      <h3 id="{id}-genes">Colour genes</h3>
+  {#if alleles && alleles.rows.length > 0}
+    <div class="alleles">
+      <h3 id="{id}-alleles">Colour genes</h3>
       <p class="key" aria-hidden="true">
         <span><i class="swatch solid"></i>shown</span>
         <span><i class="swatch faint"></i>carried, hidden</span>
         <span><i class="swatch ring"></i>hidden everywhere</span>
       </p>
-      <ul aria-labelledby="{id}-genes">
-        {#each genes.rows as row, index (index)}
+      <ul aria-labelledby="{id}-alleles">
+        {#each alleles.rows as row, index (index)}
           {@const name = capitalised(colourName(row.hue))}
           {@const colour = paletteCss(row.hue)}
           <li
-            style:--gene={colour}
+            style:--allele={colour}
             class:hidden={row.fullyHidden}
             aria-label="{name}: carried by {row.carried.toLocaleString()}, {row.fullyHidden ? 'hidden everywhere' : `shown by ${row.shown.toLocaleString()}`}"
           >
@@ -62,8 +63,8 @@
           </li>
         {/each}
       </ul>
-      {#if genes.more > 0}
-        <p class="more">and {genes.more.toLocaleString()} more</p>
+      {#if alleles.more > 0}
+        <p class="more">and {alleles.more.toLocaleString()} more</p>
       {/if}
     </div>
   {/if}
@@ -78,6 +79,11 @@
     display: flex;
     flex-direction: column;
     gap: 20px;
+  }
+
+  h2 {
+    font-size: 13px;
+    font-weight: 600;
   }
 
   .figures {
@@ -161,13 +167,13 @@
   .chip {
     width: 12px;
     height: 12px;
-    background: var(--gene);
+    background: var(--allele);
     border-radius: 50%;
   }
 
   .hidden .chip {
     background: transparent;
-    border: 2px solid var(--gene);
+    border: 2px solid var(--allele);
   }
 
   .name {
@@ -186,14 +192,14 @@
     min-width: 2px;
     height: 100%;
     overflow: hidden;
-    background: color-mix(in srgb, var(--gene) 30%, transparent);
+    background: color-mix(in srgb, var(--allele) 30%, transparent);
     border-radius: 4px;
   }
 
   .shown {
     display: block;
     height: 100%;
-    background: var(--gene);
+    background: var(--allele);
   }
 
   .numbers,
