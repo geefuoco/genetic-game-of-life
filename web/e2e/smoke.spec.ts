@@ -179,6 +179,7 @@ test('every control is reachable with Tab and labelled', async ({ page }) => {
     'Speed 1×',
     'Look',
     'Paint',
+    'Carrier brush',
     'Erase',
     'Stamp a pattern',
     'Zoom out',

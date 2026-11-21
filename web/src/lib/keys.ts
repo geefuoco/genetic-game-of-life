@@ -9,8 +9,10 @@ export interface KeyPress {
   metaKey: boolean;
   altKey: boolean;
   shiftKey: boolean;
-  /** Whether focus is in an input, where keys type rather than act. */
+  /** Whether focus is in a form control, where keys type or change it rather than act. */
   editable: boolean;
+  /** Whether focus is in a text field, which has its own undo and redo. */
+  typing: boolean;
 }
 
 const ACTIONS: Record<string, KeyAction> = {
@@ -24,8 +26,9 @@ const ACTIONS: Record<string, KeyAction> = {
 
 /** The action a key press triggers, if any. */
 export function keyAction(press: KeyPress): KeyAction | null {
-  if (press.editable || press.altKey) return null;
-  if (press.ctrlKey || press.metaKey) return commandAction(press);
+  if (press.altKey) return null;
+  if (press.ctrlKey || press.metaKey) return press.typing ? null : commandAction(press);
+  if (press.editable) return null;
   return ACTIONS[press.key] ?? null;
 }
 

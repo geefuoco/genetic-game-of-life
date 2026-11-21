@@ -25,13 +25,19 @@ fn painting_a_cell_makes_it_live_showing_the_brush_hue() {
     assert_eq!(phenotype_at(&world, 4, 4), DEAD_PHENOTYPE);
 }
 
-/// Allele Tree nodes that no Allele descends from and that are not the
-/// World's single default Allele (hue 0, Dominance Level 0).
+/// The Allele [`World::from_cells`] gives every live Cell.
+const DEFAULT: Allele = Allele {
+    hue: 0.0,
+    dominance: 0,
+};
+
+/// Founding Alleles other than the default one, which in these Worlds can
+/// only have come from a brush.
 fn brush_alleles(world: &World) -> Vec<AlleleNode> {
     world
         .allele_tree()
         .into_iter()
-        .filter(|node| node.source.is_none() && node.origin > 0)
+        .filter(|node| node.source.is_none() && node.allele != DEFAULT)
         .collect()
 }
 
@@ -276,4 +282,16 @@ fn an_empty_world_draws_brush_alleles_as_founding_alleles() {
     let orange = census.alleles.iter().find(|a| a.allele == ORANGE).unwrap();
     assert!(orange.copies > 0);
     assert!(orange.copies < 2 * world.population());
+}
+
+#[test]
+fn a_pattern_larger_than_the_world_is_refused_and_changes_nothing() {
+    let mut world = World::from_cells(30, 30, 1, &[(2, 2)]).unwrap();
+    let before = world.clone();
+    let error = world
+        .stamp(Pattern::GosperGun, 15, 15, [ORANGE, ORANGE])
+        .unwrap_err();
+    assert!(error.to_string().contains("36x9"), "{error}");
+    assert_eq!(world, before);
+    assert!(!world.can_undo());
 }

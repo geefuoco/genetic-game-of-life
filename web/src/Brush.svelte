@@ -14,12 +14,12 @@
   /** The hue slider's track: the palette sampled every 30°, so it shows exactly the colours that will appear. */
   const HUE_TRACK = `linear-gradient(90deg, ${Array.from({ length: 13 }, (_, i) => paletteCss((i * 30) % 360)).join(', ')})`;
 
-  function setAllele(which: 'colour' | 'carried', change: Partial<Allele>): void {
+  function setAllele(which: 'first' | 'second', change: Partial<Allele>): void {
     brush[which] = { ...brush[which], ...change };
   }
 </script>
 
-{#snippet allele(which: 'colour' | 'carried', name: string, dominanceName: string)}
+{#snippet allele(which: 'first' | 'second', name: string, dominanceName: string)}
   {@const value = brush[which]}
   <label class="row" for="{id}-{which}-hue">
     <span>{name}</span>
@@ -53,14 +53,9 @@
 
 <section class="brush" aria-labelledby="{id}-title">
   <h3 id="{id}-title">Brush</h3>
-  {@render allele('colour', 'Colour', 'Dominance')}
-  <label class="check" for="{id}-carrier">
-    <input id="{id}-carrier" type="checkbox" bind:checked={brush.carrier} />
-    <span>Carrier brush <small>paints a second colour gene</small></span>
-  </label>
-  {#if brush.carrier}
-    {@render allele('carried', 'Second colour', 'Second dominance')}
-  {/if}
+  {@render allele('first', 'Colour', 'Dominance')}
+  <p class="note">The Carrier brush also paints a second colour gene.</p>
+  {@render allele('second', 'Second colour', 'Second dominance')}
   <label class="row choice" for="{id}-pattern">
     <span>Pattern</span>
     <select id="{id}-pattern" value={brush.pattern} onchange={(event) => (brush.pattern = event.currentTarget.value as PatternName)}>
@@ -141,18 +136,7 @@
     box-shadow: 0 0 0 2px rgb(255 255 255 / 22%);
   }
 
-  .check {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-  }
-
-  .check input {
-    accent-color: var(--text);
-  }
-
-  small {
-    margin-left: 4px;
+  .note {
     font-size: 12px;
   }
 

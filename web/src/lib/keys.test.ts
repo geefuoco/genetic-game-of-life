@@ -8,6 +8,7 @@ const press = (key: string, extra: Partial<KeyPress> = {}): KeyPress => ({
   altKey: false,
   shiftKey: false,
   editable: false,
+  typing: false,
   ...extra,
 });
 
@@ -52,9 +53,14 @@ describe('keys', () => {
     expect(keyAction(press('y', { ctrlKey: true }))).toBe('redo');
   });
 
-  it('leaves undo and redo to an input that has focus', () => {
-    expect(keyAction(press('z', { ctrlKey: true, editable: true }))).toBeNull();
-    expect(keyAction(press('y', { ctrlKey: true, editable: true }))).toBeNull();
+  it('leaves undo and redo to a text field that has focus', () => {
+    expect(keyAction(press('z', { ctrlKey: true, editable: true, typing: true }))).toBeNull();
+    expect(keyAction(press('y', { ctrlKey: true, editable: true, typing: true }))).toBeNull();
+  });
+
+  it('undoes and redoes while a slider, checkbox or menu has focus', () => {
+    expect(keyAction(press('z', { ctrlKey: true, editable: true }))).toBe('undo');
+    expect(keyAction(press('y', { ctrlKey: true, editable: true }))).toBe('redo');
   });
 
   it('ignores Z without Ctrl or Cmd, and with Alt', () => {

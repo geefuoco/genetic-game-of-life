@@ -35,6 +35,8 @@ pub enum WorldError {
     InvalidAllele(Allele),
     /// A Cell refers to an Allele index beyond the World's Alleles.
     UnknownAllele(usize),
+    /// A Pattern is wider or taller than the World it is stamped into.
+    PatternTooLarge(Pattern),
 }
 
 impl fmt::Display for WorldError {
@@ -58,6 +60,14 @@ impl fmt::Display for WorldError {
                 a.hue, a.dominance
             ),
             Self::UnknownAllele(id) => write!(f, "allele {id} is not one of the World's Alleles"),
+            Self::PatternTooLarge(pattern) => {
+                let (width, height) = pattern.size();
+                write!(
+                    f,
+                    "pattern {} is {width}x{height} cells, larger than the world",
+                    pattern.name()
+                )
+            }
         }
     }
 }
@@ -430,7 +440,8 @@ impl World {
     /// Pattern's middle Cell (half its width and height, rounded down) at
     /// `(x, y)`. Every Cell of the Pattern's bounding box takes the
     /// Pattern's state, wrapping across the World's edges. Its Alleles are
-    /// brush Alleles, as for [`World::paint`].
+    /// brush Alleles, as for [`World::paint`]. A Pattern wider or taller than
+    /// the World is refused.
     pub fn stamp(
         &mut self,
         pattern: Pattern,
@@ -439,10 +450,13 @@ impl World {
         genotype: [Allele; 2],
     ) -> Result<(), WorldError> {
         self.index_of(x, y)?;
-        let slots = self.brush(genotype)?;
         let (width, height) = pattern.size();
-        let left = x + self.width - width / 2 % self.width;
-        let top = y + self.height - height / 2 % self.height;
+        if width > self.width || height > self.height {
+            return Err(WorldError::PatternTooLarge(pattern));
+        }
+        let slots = self.brush(genotype)?;
+        let left = x + self.width - width / 2;
+        let top = y + self.height - height / 2;
         for (dx, dy, live) in pattern.cells() {
             let index = (top + dy) % self.height * self.width + (left + dx) % self.width;
             self.edit_cell(index, live.then_some(slots));
@@ -463,7 +477,7 @@ impl World {
             return false;
         };
         self.swap_in(&mut stroke);
-        self.edits.undone(stroke);
+        self.edits.push_redo(stroke);
         true
     }
 
@@ -473,7 +487,7 @@ impl World {
             return false;
         };
         self.swap_in(&mut stroke);
-        self.edits.redone(stroke);
+        self.edits.push_undo(stroke);
         true
     }
 

@@ -4,7 +4,7 @@
   import Dock from './Dock.svelte';
   import Settings from './Settings.svelte';
   import WorldView from './WorldView.svelte';
-  import { DEFAULT_BRUSH, brushGenotype, type Brush as BrushSettings, type Tool } from './lib/brush.ts';
+  import { DEFAULT_BRUSH, toolGenotype, type Brush as BrushSettings, type Tool } from './lib/brush.ts';
   import { browserStorage, loadDocked, saveDocked } from './lib/dock.ts';
   import { keyAction, type KeyAction } from './lib/keys.ts';
   import type { NewSoup, RuleStatus, SoupDraft } from './lib/settings.ts';
@@ -55,7 +55,7 @@
   let simulation: Simulation | null = null;
 
   const stats = $derived(`gen ${generation.toLocaleString()} · ${population.toLocaleString()} alive`);
-  const brushColours = $derived(brushGenotype(brush).map((allele) => paletteCss(allele.hue)));
+  const brushColours = $derived([paletteCss(brush.first.hue), paletteCss(brush.second.hue)] as const);
 
   function onFrame(frame: Frame): void {
     generation = frame.generation;
@@ -67,11 +67,11 @@
 
   function stroke(cells: CellPosition[]): void {
     if (tool === 'erase') simulation?.send({ type: 'erase', cells });
-    else simulation?.send({ type: 'paint', cells, genotype: $state.snapshot(brushGenotype(brush)) });
+    else simulation?.send({ type: 'paint', cells, genotype: $state.snapshot(toolGenotype(tool, brush)) });
   }
 
   function stamp([x, y]: CellPosition): void {
-    simulation?.send({ type: 'stamp', pattern: brush.pattern, x, y, genotype: $state.snapshot(brushGenotype(brush)) });
+    simulation?.send({ type: 'stamp', pattern: brush.pattern, x, y, genotype: $state.snapshot(toolGenotype('stamp', brush)) });
   }
 
   function undo(): void {
@@ -140,6 +140,12 @@
     return target instanceof Element && target.closest('input, textarea, select, [contenteditable]') !== null;
   }
 
+  /** Whether focus is in a text field, which handles its own undo and redo. */
+  function isTyping(target: EventTarget | null): boolean {
+    if (target instanceof HTMLInputElement) return !['range', 'checkbox', 'radio', 'button', 'submit', 'reset', 'color', 'file'].includes(target.type);
+    return target instanceof Element && target.closest('textarea, [contenteditable]') !== null;
+  }
+
   function actionOf(event: KeyboardEvent): KeyAction | null {
     return keyAction({
       key: event.key,
@@ -148,6 +154,7 @@
       altKey: event.altKey,
       shiftKey: event.shiftKey,
       editable: isEditable(event.target),
+      typing: isTyping(event.target),
     });
   }
 

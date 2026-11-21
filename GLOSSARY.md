@@ -116,6 +116,10 @@ _Avoid_: Random fill, noise
 A named, known arrangement of live Cells (e.g. glider, Gosper gun) that can be stamped into the World.
 _Avoid_: Shape, prefab, template
 
+**Stroke**:
+The edits made by one press and drag of an editing tool, which undo reverts and redo reapplies as a whole; the Strokes of a Generation can no longer be undone once the next Generation is applied.
+_Avoid_: Action, operation
+
 **Share Link**:
 Text encoding the Rule, settings and Seed of a Soup World, from which anyone can start the same run.
 _Avoid_: Permalink, share code

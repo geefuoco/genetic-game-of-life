@@ -1,14 +1,21 @@
 import { expect, test, type Page } from '@playwright/test';
 import { DEFAULT_BRUSH } from '../src/lib/brush.ts';
-import { oklchToSrgb, paletteColour } from '../src/lib/palette.ts';
+import { paletteCss } from '../src/lib/palette.ts';
 import { stats } from './stats.ts';
 
 /**
- * The opening view: the 160 by 160 World at 9 px per Cell, with the middle
- * of Cell (80, 80) at the middle of the 1440 by 900 viewport.
+ * The opening view: the 160 by 160 World at 9 px per Cell, with the top
+ * left of Cell (80, 80) at the middle of the stage. The stage fills the
+ * 1440 by 900 viewport, less the 340 px side panel when docked.
  */
 const SCALE = 9;
-const centreOf = (x: number, y: number): { x: number; y: number } => ({ x: 720 + (x - 80) * SCALE + SCALE / 2, y: 450 + (y - 80) * SCALE + SCALE / 2 });
+type Layout = 'floating' | 'docked';
+const STAGE_MIDDLE: Record<Layout, { x: number; y: number }> = { floating: { x: 720, y: 450 }, docked: { x: 550, y: 450 } };
+
+function centreOf(x: number, y: number, layout: Layout = 'floating'): { x: number; y: number } {
+  const middle = STAGE_MIDDLE[layout];
+  return { x: middle.x + (x - 80) * SCALE + SCALE / 2, y: middle.y + (y - 80) * SCALE + SCALE / 2 };
+}
 
 const population = async (page: Page): Promise<number> => (await stats(page)).population;
 
@@ -20,13 +27,20 @@ async function openPaused(page: Page): Promise<void> {
 }
 
 /** Drags the current tool along row `y` from column `from` to column `to`. */
-async function dragRow(page: Page, y: number, from: number, to: number): Promise<void> {
-  const start = centreOf(from, y);
-  const end = centreOf(to, y);
+async function dragRow(page: Page, y: number, from: number, to: number, layout: Layout = 'floating'): Promise<void> {
+  const start = centreOf(from, y, layout);
+  const end = centreOf(to, y, layout);
   await page.mouse.move(start.x, start.y);
   await page.mouse.down();
   await page.mouse.move(end.x, end.y, { steps: 6 });
   await page.mouse.up();
+}
+
+/** Expects the screen to show the palette colour of `hue` at `point`. */
+async function expectColourAt(page: Page, point: { x: number; y: number }, hue: number): Promise<void> {
+  const expected = /rgb\((\d+) (\d+) (\d+)\)/.exec(paletteCss(hue))?.slice(1).map(Number) ?? [];
+  const shown = await pixelAt(page, point);
+  shown.forEach((channel, i) => expect(Math.abs(channel - (expected[i] ?? Number.NaN))).toBeLessThanOrEqual(8));
 }
 
 async function pixelAt(page: Page, point: { x: number; y: number }): Promise<number[]> {
@@ -42,7 +56,7 @@ async function pixelAt(page: Page, point: { x: number; y: number }): Promise<num
   }, png);
 }
 
-test('paints Organisms that appear in the World, erases, stamps, and undoes and redoes strokes', async ({ page }) => {
+test('paints live Cells that appear in the World, erases, stamps, and undoes and redoes Strokes', async ({ page }) => {
   await openPaused(page);
   const dock = page.getByRole('group', { name: 'Tools' });
   const undo = page.getByRole('button', { name: 'Undo' });
@@ -59,9 +73,7 @@ test('paints Organisms that appear in the World, erases, stamps, and undoes and 
   await dock.getByRole('button', { name: 'Paint' }).click();
   await dragRow(page, 80, 62, 81);
   await expect.poll(() => population(page)).toBe(erased + 20);
-  const painted = await pixelAt(page, centreOf(70, 80));
-  const expected = oklchToSrgb(paletteColour(DEFAULT_BRUSH.colour.hue)).map((v) => Math.round(Math.min(1, Math.max(0, v)) * 255));
-  painted.forEach((channel, i) => expect(Math.abs(channel - (expected[i] ?? 0))).toBeLessThanOrEqual(8));
+  await expectColourAt(page, centreOf(70, 80), DEFAULT_BRUSH.first.hue);
 
   await page.keyboard.press('Control+z');
   await expect.poll(() => population(page)).toBe(erased);
@@ -80,15 +92,36 @@ test('paints Organisms that appear in the World, erases, stamps, and undoes and 
   await expect(undo).toBeDisabled();
 });
 
-test('the brush settings are labelled and the Carrier brush adds a second colour gene', async ({ page }) => {
+test('in the docked layout, the Carrier brush paints Carriers that show the dominant colour, and Ctrl+Z works from a brush slider', async ({ page }) => {
+  await openPaused(page);
+  await page.getByRole('button', { name: 'Dock the controls to the side' }).click();
+  const panel = page.getByRole('complementary', { name: 'Side panel' });
+  await page.waitForTimeout(500);
+  await panel.getByRole('button', { name: 'Erase' }).click();
+  await dragRow(page, 80, 70, 90, 'docked');
+  await page.waitForTimeout(200);
+  const erased = await population(page);
+
+  await panel.getByRole('button', { name: 'Carrier brush' }).click();
+  await expect(panel.getByRole('button', { name: 'Carrier brush' })).toHaveAttribute('aria-pressed', 'true');
+  await dragRow(page, 80, 72, 81, 'docked');
+  await expect.poll(() => population(page)).toBe(erased + 10);
+  await expectColourAt(page, centreOf(76, 80, 'docked'), DEFAULT_BRUSH.first.hue);
+
+  const brush = panel.getByRole('region', { name: 'Brush' });
+  await brush.getByRole('slider', { name: 'Second dominance' }).focus();
+  await page.keyboard.press('End');
+  await page.keyboard.press('Control+z');
+  await expect.poll(() => population(page)).toBe(erased);
+});
+
+test('the brush settings are labelled', async ({ page }) => {
   await openPaused(page);
   await page.getByRole('button', { name: 'Settings' }).click();
   const brush = page.getByRole('dialog', { name: 'Settings' }).getByRole('region', { name: 'Brush' });
-  await expect(brush.getByRole('slider', { name: 'Colour', exact: true })).toHaveAttribute('aria-valuetext', `hue ${DEFAULT_BRUSH.colour.hue}°`);
+  await expect(brush.getByRole('slider', { name: 'Colour', exact: true })).toHaveAttribute('aria-valuetext', `hue ${DEFAULT_BRUSH.first.hue}°`);
   await expect(brush.getByRole('slider', { name: 'Dominance', exact: true })).toHaveAttribute('aria-valuetext', 'strong');
-  await expect(brush.getByRole('slider', { name: 'Second colour' })).toHaveCount(0);
-  await brush.getByRole('checkbox', { name: /Carrier brush/ }).check();
-  await expect(brush.getByRole('slider', { name: 'Second colour', exact: true })).toBeVisible();
+  await expect(brush.getByRole('slider', { name: 'Second colour', exact: true })).toHaveAttribute('aria-valuetext', `hue ${DEFAULT_BRUSH.second.hue}°`);
   await expect(brush.getByRole('slider', { name: 'Second dominance' })).toHaveAttribute('aria-valuetext', 'weakest');
   await brush.getByRole('combobox', { name: 'Pattern' }).selectOption({ label: 'Gosper glider gun' });
   await expect(brush.getByRole('combobox', { name: 'Pattern' })).toHaveValue('gosper-gun');

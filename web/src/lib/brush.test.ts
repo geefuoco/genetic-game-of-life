@@ -1,26 +1,28 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_BRUSH, brushGenotype, dominanceLabel } from './brush.ts';
+import { DEFAULT_BRUSH, dominanceLabel, toolGenotype } from './brush.ts';
+
+const brush = { ...DEFAULT_BRUSH, first: { hue: 200, dominance: 3 }, second: { hue: 30, dominance: 0 } };
 
 describe('the brush', () => {
-  it('paints homozygous Organisms by default', () => {
-    const brush = { ...DEFAULT_BRUSH, colour: { hue: 200, dominance: 1 } };
-    expect(brushGenotype(brush)).toEqual([
-      { hue: 200, dominance: 1 },
-      { hue: 200, dominance: 1 },
-    ]);
+  it('paints and stamps live Cells homozygous for its first Allele', () => {
+    const homozygous = [
+      { hue: 200, dominance: 3 },
+      { hue: 200, dominance: 3 },
+    ];
+    expect(toolGenotype('paint', brush)).toEqual(homozygous);
+    expect(toolGenotype('stamp', brush)).toEqual(homozygous);
   });
 
-  it('paints two different Alleles as the Carrier brush', () => {
-    const brush = { ...DEFAULT_BRUSH, colour: { hue: 200, dominance: 3 }, carrier: true, carried: { hue: 30, dominance: 0 } };
-    expect(brushGenotype(brush)).toEqual([
+  it('paints Carriers of both its Alleles with the Carrier brush', () => {
+    expect(toolGenotype('carrier', brush)).toEqual([
       { hue: 200, dominance: 3 },
       { hue: 30, dominance: 0 },
     ]);
   });
 
-  it('opens with a Carrier brush whose second Allele is hidden by the first', () => {
-    expect(DEFAULT_BRUSH.carrier).toBe(false);
-    expect(DEFAULT_BRUSH.carried.dominance).toBeLessThan(DEFAULT_BRUSH.colour.dominance);
+  it('opens with a second Allele that the first hides', () => {
+    expect(DEFAULT_BRUSH.second.dominance).toBeLessThan(DEFAULT_BRUSH.first.dominance);
+    expect(DEFAULT_BRUSH.second.hue).not.toBe(DEFAULT_BRUSH.first.hue);
   });
 
   it('names Dominance Levels from weakest to strongest', () => {

@@ -7,8 +7,8 @@
     docked: boolean;
     settingsOpen: boolean;
     tool: Tool;
-    /** CSS colours of the brush's Alleles: one, or two for the Carrier brush. */
-    brushColours: readonly string[];
+    /** CSS colours of the brush's first and second Alleles. */
+    brushColours: readonly [string, string];
     canUndo: boolean;
     canRedo: boolean;
     ontool: (tool: Tool) => void;
@@ -46,9 +46,7 @@
     ontogglesettings,
   }: Props = $props();
 
-  const dot = $derived(
-    brushColours.length > 1 ? `linear-gradient(90deg, ${brushColours[0]} 50%, ${brushColours[1]} 50%)` : (brushColours[0] ?? 'transparent'),
-  );
+  const carrierDot = $derived(`linear-gradient(90deg, ${brushColours[0]} 50%, ${brushColours[1]} 50%)`);
 
   let dockToggle: HTMLButtonElement;
   let settingsToggle: HTMLButtonElement | undefined = $state();
@@ -107,7 +105,17 @@
       >
     </button>
     <button type="button" aria-label="Paint" title="Paint: drag to paint cells" aria-pressed={tool === 'paint'} class:on={tool === 'paint'} onclick={() => ontool('paint')}>
-      <span class="dot" style:background={dot} aria-hidden="true"></span>
+      <span class="dot" style:background={brushColours[0]} aria-hidden="true"></span>
+    </button>
+    <button
+      type="button"
+      aria-label="Carrier brush"
+      title="Carrier brush: drag to paint cells carrying both brush colours"
+      aria-pressed={tool === 'carrier'}
+      class:on={tool === 'carrier'}
+      onclick={() => ontool('carrier')}
+    >
+      <span class="dot" style:background={carrierDot} aria-hidden="true"></span>
     </button>
     <button type="button" aria-label="Erase" title="Erase: drag to erase cells" aria-pressed={tool === 'erase'} class:on={tool === 'erase'} onclick={() => ontool('erase')}>
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"
@@ -125,9 +133,6 @@
         /><rect x="11" y="11" width="3" height="3" rx="0.8" /></svg
       >
     </button>
-  </div>
-  <span class="sep" aria-hidden="true"></span>
-  <div class="group">
     <button type="button" aria-label="Undo" title="Undo (Ctrl+Z)" disabled={!canUndo} onclick={onundo}>
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
         ><path d="M5.5 3L2.5 6l3 3" /><path d="M2.5 6h7a4 4 0 010 8H7" /></svg

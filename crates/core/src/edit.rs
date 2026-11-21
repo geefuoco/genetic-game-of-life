@@ -65,12 +65,12 @@ impl EditHistory {
     }
 
     /// Makes `stroke`, just undone, the next to redo.
-    pub(crate) fn undone(&mut self, stroke: Stroke) {
+    pub(crate) fn push_redo(&mut self, stroke: Stroke) {
         self.redo.push(stroke);
     }
 
     /// Makes `stroke`, just redone, the next to undo.
-    pub(crate) fn redone(&mut self, stroke: Stroke) {
+    pub(crate) fn push_undo(&mut self, stroke: Stroke) {
         self.undo.push(stroke);
     }
 
