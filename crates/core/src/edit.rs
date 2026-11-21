@@ -82,6 +82,18 @@ impl EditHistory {
         self.undo.push(stroke);
     }
 
+    /// The Cells whose state comes from an edit not undone, in row-major
+    /// order.
+    pub(crate) fn edited_cells(&self) -> Vec<usize> {
+        let mut cells: Vec<usize> = std::iter::once(&self.open)
+            .chain(&self.undo)
+            .flat_map(|stroke| stroke.cells.keys().copied())
+            .collect();
+        cells.sort_unstable();
+        cells.dedup();
+        cells
+    }
+
     pub(crate) fn can_undo(&self) -> bool {
         !self.open.is_empty() || !self.undo.is_empty()
     }

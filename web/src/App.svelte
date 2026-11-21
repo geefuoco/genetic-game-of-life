@@ -9,10 +9,11 @@
   import { browserStorage, loadDocked, saveDocked } from './lib/dock.ts';
   import { keyAction, type KeyAction } from './lib/keys.ts';
   import type { NewSoup, RuleStatus, SoupDraft } from './lib/settings.ts';
+  import { currentDevice, defaultPedigreeBudget, MAX_PEDIGREE_DEPTH, PEDIGREE_DEPTH, PEDIGREE_DEPTH_STEP } from './lib/pedigree.ts';
   import { DEFAULT_SPEED, SPEEDS, cycleSpeed, nudgeSpeed } from './lib/speed.ts';
   import { paletteCss } from './lib/palette.ts';
   import type { Rect } from './lib/camera.ts';
-  import type { CellPosition, Frame, Inspection, MutationSettings, SoupSettings } from './protocol.ts';
+  import type { CellPosition, Frame, Inspection, MutationSettings, Pedigree, SoupSettings } from './protocol.ts';
   import { Simulation } from './simulation.ts';
 
   /** The Soup the page opens on, apart from its random Seed: Conway's Life with the core's default Mutation. */
@@ -44,6 +45,9 @@
   let inspection = $state.raw<Inspection | null>(null);
   /** Whether frames' inspections are wanted: false once the inspector is closed, so frames already on their way cannot reopen it. */
   let following = false;
+  /** The inspected Organism's Pedigree as last sent, with the depth it was asked for. */
+  let pedigree = $state.raw<{ pedigree: Pedigree; depth: number } | null>(null);
+  let pedigreeBudget = $state(defaultPedigreeBudget(currentDevice()));
   let anchor = $state.raw<Rect | null>(null);
   let stageWidth = $state(0);
   let stageHeight = $state(0);
@@ -65,6 +69,18 @@
   const stats = $derived(`gen ${generation.toLocaleString()} · ${population.toLocaleString()} alive`);
   const brushColours = $derived([paletteCss(brush.first.hue), paletteCss(brush.second.hue)] as const);
   const inspected = $derived(inspection && { x: inspection.x, y: inspection.y, dead: inspection.deathGeneration !== null });
+  /** The Pedigree, once it is the inspected Organism's: one asked for before another Organism was inspected may still arrive. */
+  const inspectedPedigree = $derived.by(() => {
+    const root = pedigree?.pedigree.organisms[0];
+    if (!pedigree || !inspection || !root) return null;
+    const same = root.x === inspection.x && root.y === inspection.y && root.birthGeneration === inspection.birthGeneration;
+    return same ? pedigree : null;
+  });
+  const expandable = $derived(
+    inspectedPedigree !== null &&
+      inspectedPedigree.depth < MAX_PEDIGREE_DEPTH &&
+      inspectedPedigree.pedigree.organisms.some((organism) => organism.origin === 'unexplored'),
+  );
 
   function onFrame(frame: Frame): void {
     generation = frame.generation;
@@ -84,11 +100,23 @@
     following = true;
     hintShown = false;
     simulation?.send({ type: 'inspect', x, y });
+    simulation?.send({ type: 'pedigree', depth: PEDIGREE_DEPTH });
+  }
+
+  function expandPedigree(): void {
+    if (!inspectedPedigree) return;
+    simulation?.send({ type: 'pedigree', depth: Math.min(MAX_PEDIGREE_DEPTH, inspectedPedigree.depth + PEDIGREE_DEPTH_STEP) });
+  }
+
+  function setPedigreeBudget(bytes: number): void {
+    pedigreeBudget = bytes;
+    simulation?.send({ type: 'set-pedigree-budget', bytes });
   }
 
   function closeInspector(): void {
     following = false;
     inspection = null;
+    pedigree = null;
     simulation?.send({ type: 'stop-inspecting' });
   }
 
@@ -224,6 +252,9 @@
       rule: (running) => {
         rule = { running, rejected: null };
       },
+      pedigree: (next, depth) => {
+        if (following) pedigree = next && { pedigree: next, depth };
+      },
       ruleRejected: (rejected) => {
         rule = { running: rule.running, rejected };
       },
@@ -231,6 +262,7 @@
         problem = message;
       },
     });
+    simulation.send({ type: 'set-pedigree-budget', bytes: pedigreeBudget });
     simulation.send({ type: 'start', soup: { ...OPENING_SOUP, seed }, rate: SPEEDS[speed]!.rate, running });
     const hint = setTimeout(() => {
       hintShown = false;
@@ -271,7 +303,17 @@
 {/snippet}
 
 {#snippet settings()}
-  <Settings {rule} {mutation} bind:draft onrule={setRule} onmutation={setMutation} onnewsoup={newSoup} {randomSeed} />
+  <Settings
+    {rule}
+    {mutation}
+    {pedigreeBudget}
+    bind:draft
+    onrule={setRule}
+    onmutation={setMutation}
+    onpedigreebudget={setPedigreeBudget}
+    onnewsoup={newSoup}
+    {randomSeed}
+  />
   <Brush bind:brush />
 {/snippet}
 
@@ -295,7 +337,15 @@
     />
     <div class="vignette"></div>
     {#if inspection}
-      <Inspector {inspection} {anchor} stage={{ width: stageWidth, height: stageHeight }} onclose={closeInspector} />
+      <Inspector
+        {inspection}
+        {anchor}
+        stage={{ width: stageWidth, height: stageHeight }}
+        pedigree={inspectedPedigree?.pedigree ?? null}
+        {expandable}
+        onexpand={expandPedigree}
+        onclose={closeInspector}
+      />
     {/if}
     <header class="wordmark" aria-hidden={docked}>
       <h1>genetic life</h1>

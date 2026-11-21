@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { budgetLabel, MB, PEDIGREE_BUDGET_MB } from './lib/pedigree.ts';
   import type { MutationSettings } from './protocol.ts';
   import {
     RULE_PRESETS,
@@ -17,15 +18,18 @@
   interface Props {
     rule: RuleStatus;
     mutation: MutationSettings;
+    /** The memory budget of Recorded History, in bytes. */
+    pedigreeBudget: number;
     /** The New Soup form, kept by the caller so it survives the settings moving between popover and panel. */
     draft: SoupDraft;
     onrule: (rule: string) => void;
     onmutation: (mutation: MutationSettings) => void;
+    onpedigreebudget: (bytes: number) => void;
     onnewsoup: (soup: NewSoup) => void;
     randomSeed: () => bigint;
   }
 
-  let { rule, mutation, draft = $bindable(), onrule, onmutation, onnewsoup, randomSeed }: Props = $props();
+  let { rule, mutation, pedigreeBudget, draft = $bindable(), onrule, onmutation, onpedigreebudget, onnewsoup, randomSeed }: Props = $props();
 
   const id = $props.id();
   const CUSTOM = '';
@@ -119,6 +123,23 @@
     />
     <output for="{id}-reach">{mutationMagnitudeLabel(mutation.magnitude)}</output>
   </label>
+
+  <label class="row budget" for="{id}-budget">
+    <span>Ancestry memory</span>
+    <input
+      id="{id}-budget"
+      type="range"
+      min={PEDIGREE_BUDGET_MB.min}
+      max={PEDIGREE_BUDGET_MB.max}
+      step={PEDIGREE_BUDGET_MB.step}
+      value={Math.round(pedigreeBudget / MB)}
+      aria-valuetext={budgetLabel(pedigreeBudget)}
+      aria-describedby="{id}-budget-hint"
+      oninput={(event) => onpedigreebudget(Number(event.currentTarget.value) * MB)}
+    />
+    <output for="{id}-budget">{budgetLabel(pedigreeBudget)}</output>
+  </label>
+  <p id="{id}-budget-hint" class="hint">Older ancestors are forgotten first once this fills.</p>
 
   <form class="soup" aria-labelledby="{id}-soup" onsubmit={startSoup} novalidate>
     <h3 id="{id}-soup">New soup</h3>
@@ -241,6 +262,10 @@
     align-items: center;
   }
 
+  .row.budget {
+    grid-template-columns: 1fr 116px 58px;
+  }
+
   .row.choice {
     grid-template-columns: 1fr 150px;
   }
@@ -281,6 +306,11 @@
   input:focus-visible {
     outline: 2px solid var(--text);
     outline-offset: 1px;
+  }
+
+  .hint {
+    margin-top: -6px;
+    font-size: 11.5px;
   }
 
   .problem {

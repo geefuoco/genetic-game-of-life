@@ -103,6 +103,8 @@ function harness(options: { keepUp?: boolean } = {}): Harness {
       inspect: (x, y) => world.inspect(x, y),
       inspection: () => world.inspection(),
       stopInspecting: () => world.stopInspecting(),
+      pedigree: (depth) => world.pedigree(depth),
+      setPedigreeBudget: (bytes) => world.setPedigreeBudget(bytes),
       free: () => world.free(),
     };
   };
