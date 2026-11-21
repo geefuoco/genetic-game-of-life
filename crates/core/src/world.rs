@@ -6,7 +6,7 @@ use crate::genetics::{
 use crate::inspection::{InspectedOrganism, Inspection};
 use crate::mutation::MutationSettings;
 use crate::pattern::Pattern;
-use crate::pedigree::{birth_code, Lineage, Pedigree, RecordedHistory, MAX_PEDIGREE_BUDGET};
+use crate::pedigree::{birth_code, Pedigree, PedigreeQuery, RecordedHistory, MAX_PEDIGREE_BUDGET};
 use crate::rng::Rng;
 use crate::rule::Rule;
 use crate::snapshot::{self, invalid, Reader, SnapshotError, Writer};
@@ -469,7 +469,7 @@ impl World {
     /// the current Generation: painted or stamped in it, or, in the World a
     /// run starts as, all of them.
     fn placed_cells(&self) -> Vec<usize> {
-        if self.history.seeded() {
+        if self.history.starting_world() {
             return (0..self.cells.len())
                 .filter(|&index| self.cells[index].is_some())
                 .collect();
@@ -801,13 +801,13 @@ impl World {
     pub fn pedigree(&self, depth: usize) -> Option<Pedigree> {
         let organism = self.inspected.as_ref()?;
         let live_since = |index: usize| self.cells[index].map(|_| self.born[index]);
-        let lineage = Lineage {
+        let query = PedigreeQuery {
             history: &self.history,
             width: self.width,
             height: self.height,
             live_since: &live_since,
         };
-        Some(lineage.pedigree(
+        Some(query.pedigree(
             organism.index,
             organism.birth_generation,
             organism.placed,

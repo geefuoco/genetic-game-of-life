@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Pedigree, PedigreeOrganism } from '../protocol.ts';
 import { budgetLabel, defaultPedigreeBudget, describeAncestor, layoutPedigree, rowLabel } from './pedigree.ts';
 
+/** A megabyte, written out so the expected budgets do not depend on the module's own unit. */
 const MB = 1_000_000;
 
 describe('the default Pedigree budget', () => {

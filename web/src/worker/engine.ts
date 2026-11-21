@@ -159,7 +159,7 @@ export class Engine {
         break;
       case 'set-pedigree-budget':
         this.pedigreeBudget = command.bytes;
-        this.report(() => this.world?.setPedigreeBudget(command.bytes));
+        this.change((world) => world.setPedigreeBudget(command.bytes));
         break;
       case 'release':
         if (command.phenotypes.length === this.cells) {
@@ -222,15 +222,6 @@ export class Engine {
       this.options.send({ type: 'error', message: messageOf(error) }, []);
     }
     this.publish();
-  }
-
-  /** Runs `apply`, reporting a change the core refuses. */
-  private report(apply: () => void): void {
-    try {
-      apply();
-    } catch (error) {
-      this.options.send({ type: 'error', message: messageOf(error) }, []);
-    }
   }
 
   private sendPedigree(depth: number): void {

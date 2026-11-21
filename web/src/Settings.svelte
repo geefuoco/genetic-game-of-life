@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { budgetLabel, PEDIGREE_BUDGET_MB } from './lib/pedigree.ts';
+  import { budgetLabel, MB, PEDIGREE_BUDGET_MB } from './lib/pedigree.ts';
   import type { MutationSettings } from './protocol.ts';
   import {
     RULE_PRESETS,
@@ -30,8 +30,6 @@
   }
 
   let { rule, mutation, pedigreeBudget, draft = $bindable(), onrule, onmutation, onpedigreebudget, onnewsoup, randomSeed }: Props = $props();
-
-  const MB = 1_000_000;
 
   const id = $props.id();
   const CUSTOM = '';

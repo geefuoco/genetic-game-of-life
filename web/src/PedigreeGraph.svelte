@@ -18,11 +18,11 @@
   const TAIL = 15;
 
   const layout = $derived(layoutPedigree(pedigree));
-  const widest = $derived(Math.max(1, ...Array.from({ length: layout.rows }, (_, row) => layout.nodes.filter((node) => node.row === row).length)));
+  const rows = $derived(Array.from({ length: layout.rows }, (_, row) => layout.nodes.filter((node) => node.row === row)));
+  const widest = $derived(Math.max(1, ...rows.map((row) => row.length)));
   const width = $derived(Math.max(MIN_WIDTH, widest * SPACING + 2 * MARGIN));
   const height = $derived((layout.rows - 1) * ROW + 2 * MARGIN + TAIL + 4);
   const positions = $derived(new Map(layout.nodes.map((node) => [node.organism, point(node)])));
-  const rows = $derived(Array.from({ length: layout.rows }, (_, row) => layout.nodes.filter((node) => node.row === row)));
   const shown = $derived(new Set(pedigree.organisms.map(markerOf)));
 
   type Marker = 'born' | 'placed' | 'beyond' | 'unexplored' | 'pool';

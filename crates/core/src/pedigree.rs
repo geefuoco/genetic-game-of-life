@@ -177,30 +177,30 @@ pub(crate) struct RecordedHistory {
     blocks: VecDeque<Block>,
     /// The Births of `current`, as they are recorded.
     births: Vec<u32>,
-    /// Whether every Organism live in `current` was placed rather than Born,
-    /// as in the World a run starts as.
-    seeded: bool,
+    /// Whether `current` is the Generation of the World a run starts as, in
+    /// which every live Organism was placed rather than Born.
+    starting_world: bool,
 }
 
 impl RecordedHistory {
-    /// Recorded History of a World started in `generation`; with `seeded`
-    /// its live Organisms were placed in it, otherwise their Pedigrees are
-    /// beyond Recorded History.
-    pub(crate) fn new(generation: u64, seeded: bool) -> Self {
+    /// Recorded History of a World started in `generation`; with
+    /// `starting_world` its live Organisms were placed in it, as in the World
+    /// a run starts as, otherwise their Pedigrees are beyond Recorded History.
+    pub(crate) fn new(generation: u64, starting_world: bool) -> Self {
         Self {
             budget: MAX_PEDIGREE_BUDGET,
             block_bytes: 0,
             current: generation,
             blocks: VecDeque::new(),
             births: Vec::new(),
-            seeded,
+            starting_world,
         }
     }
 
-    /// Whether the Organisms live as the current Generation began were all
-    /// placed.
-    pub(crate) fn seeded(&self) -> bool {
-        self.seeded
+    /// Whether the current Generation is that of the World a run starts as,
+    /// in which every live Organism was placed.
+    pub(crate) fn starting_world(&self) -> bool {
+        self.starting_world
     }
 
     /// Records a Birth into the Generation after the current one, at Cell
@@ -218,13 +218,14 @@ impl RecordedHistory {
         records.extend_from_slice(&self.births);
         records.extend(placed.iter().map(|&index| index as u32));
         self.births.clear();
+        self.make_room_for_a_block();
         self.block_bytes += records.len() * size_of::<u32>();
         self.blocks.push_back(Block {
             records: records.into_boxed_slice(),
             placed_from,
         });
         self.current += 1;
-        self.seeded = false;
+        self.starting_world = false;
     }
 
     pub(crate) fn budget(&self) -> usize {
@@ -244,29 +245,62 @@ impl RecordedHistory {
             + self.births.capacity() * size_of::<u32>()
     }
 
-    /// Frees spare capacity, then drops the oldest Generations' records, and
-    /// last the current Generation's Births, until within the budget.
+    /// Makes room in `blocks` for one more block: by growing it while the
+    /// grown queue fits the budget, otherwise by dropping the oldest block,
+    /// so once the budget is full each Generation reuses the slot of the one
+    /// it drops instead of reallocating the queue.
+    fn make_room_for_a_block(&mut self) {
+        let capacity = self.blocks.capacity();
+        if self.blocks.len() < capacity {
+            return;
+        }
+        let grown = (capacity * 2).max(16);
+        let fits = self.bytes() + (grown - capacity) * size_of::<Block>() <= self.budget;
+        if fits || !self.drop_oldest() {
+            self.blocks.reserve_exact(grown - self.blocks.len());
+        }
+    }
+
+    /// Drops the oldest block, if any, returning whether there was one.
+    fn drop_oldest(&mut self) -> bool {
+        let Some(block) = self.blocks.pop_front() else {
+            return false;
+        };
+        self.block_bytes -= block.records.len() * size_of::<u32>();
+        true
+    }
+
+    /// Drops the oldest Generations' records, and last the current
+    /// Generation's Births, until within the budget, between Generations.
+    ///
+    /// Capacity freed by dropping is reused by later Generations, so it is
+    /// given back only once most of it is spare, as after the budget is
+    /// lowered. A Generation whose Births are dropped this way is the oldest
+    /// left, so lookups reaching it end there, beyond Recorded History.
     pub(crate) fn keep_within_budget(&mut self) {
         while self.bytes() > self.budget {
-            let spare = self.bytes();
-            self.blocks.shrink_to_fit();
-            self.births.shrink_to_fit();
-            if self.bytes() < spare {
-                continue;
+            let capacity = self.blocks.capacity();
+            if capacity > 2 * self.blocks.len() + 16 {
+                self.blocks.shrink_to_fit();
+                if self.blocks.capacity() < capacity {
+                    continue;
+                }
             }
-            if let Some(block) = self.blocks.pop_front() {
-                self.block_bytes -= block.records.len() * size_of::<u32>();
-            } else {
+            if !self.drop_oldest() {
                 self.blocks = VecDeque::new();
                 self.births = Vec::new();
             }
         }
     }
 
-    /// The block of `generation`, if retained and complete.
+    /// The oldest Generation whose records are retained.
+    fn first_retained(&self) -> u64 {
+        self.current - self.blocks.len() as u64
+    }
+
+    /// The block of `generation`, if retained.
     fn block(&self, generation: u64) -> Option<&Block> {
-        let first = self.current - self.blocks.len() as u64;
-        let offset = generation.checked_sub(first)?;
+        let offset = generation.checked_sub(self.first_retained())?;
         self.blocks.get(offset as usize)
     }
 
@@ -289,7 +323,7 @@ impl RecordedHistory {
 
     /// How the Organism at Cell `index` at the end of `generation`, a
     /// Generation already over, was created in it, if it was.
-    fn created(&self, generation: u64, index: usize) -> Option<Created> {
+    fn created_in(&self, generation: u64, index: usize) -> Option<Created> {
         if self.was_placed(generation, index) {
             Some(Created::Placed)
         } else {
@@ -301,24 +335,23 @@ impl RecordedHistory {
     /// at the end of `generation` was created; `None` if before Recorded
     /// History. `live_since` is the Birth Generation of the Organism live
     /// there now, if any.
-    fn creation(
+    fn latest_creation(
         &self,
         index: usize,
         generation: u64,
         live_since: Option<u64>,
     ) -> Option<(u64, Created)> {
         if let Some(born) = live_since.filter(|&born| born <= generation) {
-            return self.created(born, index).map(|created| (born, created));
+            return self.created_in(born, index).map(|created| (born, created));
         }
-        let first = self.current - self.blocks.len() as u64;
-        (first..=generation)
+        (self.first_retained()..=generation)
             .rev()
-            .find_map(|g| self.created(g, index).map(|created| (g, created)))
+            .find_map(|g| self.created_in(g, index).map(|created| (g, created)))
     }
 }
 
 /// The World as a Pedigree query sees it.
-pub(crate) struct Lineage<'a> {
+pub(crate) struct PedigreeQuery<'a> {
     pub(crate) history: &'a RecordedHistory,
     pub(crate) width: usize,
     pub(crate) height: usize,
@@ -328,12 +361,12 @@ pub(crate) struct Lineage<'a> {
 
 /// What makes two ancestors the same Organism.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum Key {
+enum AncestorKey {
     Created(usize, u64, Created),
     Beyond(usize),
 }
 
-impl Lineage<'_> {
+impl PedigreeQuery<'_> {
     /// The Cell of the Neighbour of Cell `index` in `direction`.
     fn neighbour(&self, index: usize, direction: usize) -> usize {
         let (w, h) = (self.width, self.height);
@@ -375,10 +408,10 @@ impl Lineage<'_> {
             for (direction, allele) in birth_parents(code) {
                 let cell = self.neighbour(index, direction);
                 let live_since = (self.live_since)(cell);
-                let creation = self.history.creation(cell, born - 1, live_since);
+                let creation = self.history.latest_creation(cell, born - 1, live_since);
                 let key = match creation {
-                    Some((generation, created)) => Key::Created(cell, generation, created),
-                    None => Key::Beyond(cell),
+                    Some((generation, created)) => AncestorKey::Created(cell, generation, created),
+                    None => AncestorKey::Beyond(cell),
                 };
                 let organism = *keys.entry(key).or_insert_with(|| {
                     let birth_generation = match creation {

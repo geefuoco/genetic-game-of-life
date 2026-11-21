@@ -2,7 +2,8 @@
 
 import type { Pedigree, PedigreeOrganism } from '../protocol.ts';
 
-const MB = 1_000_000;
+/** Bytes in a megabyte, the unit the settings show the Pedigree budget in. */
+export const MB = 1_000_000;
 
 /** The Pedigree budget the settings offer, in MB: the core's maximum, and the default on constrained devices. */
 export const PEDIGREE_BUDGET_MB = { min: 10, max: 200, step: 10, constrained: 50 } as const;

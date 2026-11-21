@@ -125,9 +125,9 @@ fn a_b0_birth_has_no_parents_and_both_alleles_from_the_pool() {
     );
 }
 
-/// Six distinct Alleles, so every Allele a child carries names the Parent
-/// Allele it came from.
-fn hues(n: usize) -> Vec<Allele> {
+/// `n` Alleles of distinct hues, so every Allele a child carries names the
+/// Parent Allele it came from.
+fn distinct_alleles(n: usize) -> Vec<Allele> {
     (0..n)
         .map(|i| Allele {
             hue: i as f64 * 50.0,
@@ -138,7 +138,7 @@ fn hues(n: usize) -> Vec<Allele> {
 
 #[test]
 fn each_of_two_parents_passed_on_the_allele_its_pedigree_records() {
-    let alleles = hues(6);
+    let alleles = distinct_alleles(6);
     for seed in 0..12 {
         let live = [(4, 5, 0, 1), (5, 5, 2, 3), (6, 5, 4, 5)];
         let mut world =
