@@ -55,9 +55,9 @@
   function sameLineage(a: InspectedAllele, b: InspectedAllele): boolean {
     return (
       a.lineage.length === b.lineage.length &&
-      a.lineage.every((step, i) => {
+      a.lineage.every((allele, i) => {
         const other = b.lineage[i];
-        return other !== undefined && step.hue === other.hue && step.dominance === other.dominance && step.origin === other.origin;
+        return other !== undefined && allele.hue === other.hue && allele.dominance === other.dominance && allele.origin === other.origin;
       })
     );
   }
@@ -66,14 +66,15 @@
     return colourName(allele.hue);
   }
 
-  function strength(allele: InspectedAllele): string {
+  /** A Dominance Level as the strength bars describe it, such as "Strength 3 of 4, strong". */
+  function dominanceText(allele: InspectedAllele): string {
     return `Strength ${allele.dominance + 1} of ${MAX_DOMINANCE + 1}, ${dominanceLabel(allele.dominance)}`;
   }
 
-  /** How an Allele in a lineage came about. */
+  /** When an Allele in a lineage appeared: a Founding Allele at Generation 0, one painted or stamped in later, or a mutant. */
   function origin(allele: LineageAllele, founding: boolean): string {
     if (!founding) return `gen ${allele.origin.toLocaleString()}`;
-    return allele.origin === 0 ? 'founding' : `painted gen ${allele.origin.toLocaleString()}`;
+    return allele.origin === 0 ? 'founding' : `added gen ${allele.origin.toLocaleString()}`;
   }
 </script>
 
@@ -82,7 +83,7 @@
     <span class="swatch" style:background={allele.shown ? paletteCss(allele.hue) : null} aria-hidden="true"></span>
     <span class="name">{name(allele)}</span>
     <span class="state">{allele.shown ? 'shown' : 'hidden'}</span>
-    <span class="bars" role="img" aria-label={strength(allele)} title={strength(allele)}>
+    <span class="bars" role="img" aria-label={dominanceText(allele)} title={dominanceText(allele)}>
       {#each { length: MAX_DOMINANCE + 1 }, level (level)}
         <i class:filled={level <= allele.dominance}></i>
       {/each}
@@ -134,13 +135,14 @@
   </p>
   <section class="lineages" aria-labelledby="inspector-lineages">
     <h3 id="inspector-lineages">Where its colour genes came from</h3>
-    {#each traced as allele, i (i)}
+    {#each traced as allele, gene (gene)}
       <ol class="lineage" aria-label="Lineage of the {name(allele)} colour gene, oldest first">
-        {#each [...allele.lineage].reverse() as ancestor, step (step)}
-          <li class:extinct={ancestor.status === 'extinct'} title={ancestor.status === 'extinct' ? 'Died out' : null}>
-            <span class="dot" style:background={paletteCss(ancestor.hue)} aria-hidden="true"></span>
-            {name(ancestor)}
-            <span class="when">{origin(ancestor, step === 0)}{ancestor.status === 'extinct' ? ', died out' : ''}</span>
+        {#each [...allele.lineage].reverse() as link, i (i)}
+          {@const extinct = link.status === 'extinct'}
+          <li class:extinct>
+            <span class="dot" style:background={paletteCss(link.hue)} aria-hidden="true"></span>
+            {name(link)}
+            <span class="when">{origin(link, i === 0)}{extinct ? ', died out' : ''}</span>
           </li>
         {/each}
       </ol>

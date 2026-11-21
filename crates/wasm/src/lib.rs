@@ -111,12 +111,10 @@ impl WebWorld {
         self.world.can_redo()
     }
 
-    /// Starts following the Organism at `(x, y)` for its inspector and
-    /// returns its inspection as for `inspection`; nothing, following
-    /// nothing, if the Cell is dead.
-    pub fn inspect(&mut self, x: usize, y: usize) -> Result<Option<Vec<f64>>, JsError> {
-        let inspection = self.world.inspect(x, y).map_err(js_error)?;
-        Ok(inspection.as_ref().map(packed_inspection))
+    /// Starts following the Organism at `(x, y)` for its inspector, or
+    /// follows nothing if the Cell is dead.
+    pub fn inspect(&mut self, x: usize, y: usize) -> Result<(), JsError> {
+        self.world.inspect(x, y).map(|_| ()).map_err(js_error)
     }
 
     /// The inspection of the Organism being followed, if any, packed as

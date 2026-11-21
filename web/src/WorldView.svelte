@@ -4,6 +4,7 @@
   import {
     cellToScreen,
     openingCamera,
+    worldWindow,
     panBy,
     resizeViewport,
     screenToCell,
@@ -30,8 +31,8 @@
     onstamp: (cell: CellPosition) => void;
     /** Called when a press of an editing tool ends, closing its edit stroke. */
     onstrokeend: () => void;
-    /** Called with the Cell the look tool is clicked or tapped on. */
-    oninspect: (cell: CellPosition) => void;
+    /** Called with the Cell the look tool is clicked or tapped on, or `null` for a click outside the World. */
+    oninspect: (cell: CellPosition | null) => void;
     /** The inspected Organism's Cell, ringed, and whether it has died. */
     inspected: { x: number; y: number; dead: boolean } | null;
     /** Where the inspected Cell is on screen, or `null` while it is out of view or nothing is inspected. */
@@ -148,9 +149,13 @@
   }
 
   function onpointerup(event: PointerEvent): void {
-    if (pressedAt) {
-      const at = cellAt(event);
-      if (at) oninspect([Math.floor(at.x), Math.floor(at.y)]);
+    if (pressedAt && camera && world) {
+      const bounds = canvas.getBoundingClientRect();
+      const point = { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
+      const shown = worldWindow(camera, world, viewport);
+      const inside = point.x >= shown.x && point.y >= shown.y && point.x < shown.x + shown.width && point.y < shown.y + shown.height;
+      const at = screenToCell(camera, world, point);
+      oninspect(inside ? [Math.floor(at.x), Math.floor(at.y)] : null);
     }
     endDrag();
   }

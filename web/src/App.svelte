@@ -75,7 +75,12 @@
     view.present(frame);
   }
 
-  function inspect([x, y]: CellPosition): void {
+  function inspect(cell: CellPosition | null): void {
+    if (!cell) {
+      if (inspection) closeInspector();
+      return;
+    }
+    const [x, y] = cell;
     following = true;
     hintShown = false;
     simulation?.send({ type: 'inspect', x, y });

@@ -7,7 +7,7 @@ import { stats } from './stats.ts';
  * 1440 by 900 viewport, less the 340 px side panel when docked.
  */
 const SCALE = 9;
-export type Layout = 'floating' | 'docked';
+type Layout = 'floating' | 'docked';
 const STAGE_MIDDLE: Record<Layout, { x: number; y: number }> = { floating: { x: 720, y: 450 }, docked: { x: 550, y: 450 } };
 
 export function centreOf(x: number, y: number, layout: Layout = 'floating'): { x: number; y: number } {

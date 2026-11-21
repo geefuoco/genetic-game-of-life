@@ -3,7 +3,7 @@ use crate::edit::{CellState, EditHistory, Stroke};
 use crate::genetics::{
     phenotype, shows, wrap, Allele, AlleleCensus, Census, Genotype, DEAD_PHENOTYPE, MAX_DOMINANCE,
 };
-use crate::inspection::{Followed, Inspection};
+use crate::inspection::{InspectedOrganism, Inspection};
 use crate::mutation::MutationSettings;
 use crate::pattern::Pattern;
 use crate::rng::Rng;
@@ -87,7 +87,8 @@ pub struct World {
     height: usize,
     cells: Vec<Option<Genotype>>,
     /// The Birth Generation of each live Cell's Organism; meaningless for a
-    /// dead Cell.
+    /// dead Cell. Kept apart from `cells` so the Rule's scan of `cells`
+    /// reads no more memory than it did before Birth Generations existed.
     born: Vec<u64>,
     tree: AlleleTree,
     population_history: Vec<usize>,
@@ -96,7 +97,7 @@ pub struct World {
     mutation: MutationSettings,
     rng: Rng,
     edits: EditHistory,
-    inspected: Option<Followed>,
+    inspected: Option<InspectedOrganism>,
 }
 
 impl PartialEq for World {
@@ -118,7 +119,8 @@ impl PartialEq for World {
         *width == other.width
             && *height == other.height
             && *cells == other.cells
-            && live_births(cells, born).eq(live_births(&other.cells, &other.born))
+            && live_birth_generations(cells, born)
+                .eq(live_birth_generations(&other.cells, &other.born))
             && *tree == other.tree
             && *population_history == other.population_history
             && *generation == other.generation
@@ -404,7 +406,7 @@ impl World {
         self.tree
             .prune(self.cells.iter().flatten().flatten().copied());
         self.edits.clear();
-        self.follow_inspected();
+        self.follow_inspected(false);
     }
 
     fn birth(&mut self, parents: &[Genotype], pool: &AllelePool) -> Genotype {
@@ -534,11 +536,11 @@ impl World {
         if let Some(tree) = &mut stroke.tree {
             std::mem::swap(tree, &mut self.tree);
         }
-        self.follow_inspected();
+        self.follow_inspected(true);
     }
 
     /// Sets the Cell at `index` as part of the open stroke; a new live
-    /// Genotype is a new Organism, Born in the current Generation.
+    /// Genotype is a new Organism whose Birth Generation is the current one.
     fn edit_cell(&mut self, index: usize, cell: Option<Genotype>) {
         if self.cells[index] != cell {
             let state = CellState {
@@ -547,8 +549,8 @@ impl World {
             };
             let before = self.replace_cell(index, state);
             self.edits.record_cell(index, before);
-            if self.inspected.as_ref().is_some_and(|f| f.index == index) {
-                self.follow_inspected();
+            if self.inspected.as_ref().is_some_and(|o| o.index == index) {
+                self.follow_inspected(false);
             }
         }
     }
@@ -692,14 +694,14 @@ impl World {
     /// returns its inspection; `None`, following nothing, if the Cell is dead.
     pub fn inspect(&mut self, x: usize, y: usize) -> Result<Option<Inspection>, WorldError> {
         let index = self.index_of(x, y)?;
-        self.inspected = self.cells[index].map(|genotype| Followed {
+        self.inspected = self.cells[index].map(|genotype| InspectedOrganism {
             index,
-            born: self.born[index],
+            birth_generation: self.born[index],
             lineages: genotype.map(|slot| {
                 self.lineage(self.tree.id(slot))
                     .expect("a live Cell's Alleles are retained")
             }),
-            died: None,
+            death_generation: None,
         });
         Ok(self.inspection())
     }
@@ -709,28 +711,31 @@ impl World {
         self.inspected = None;
     }
 
-    /// Notes whether the followed Organism still lives: it has died once its
-    /// Cell no longer holds it, and lives again if undo or redo restores it.
-    fn follow_inspected(&mut self) {
-        let Some(followed) = &mut self.inspected else {
+    /// Notes the Generation the inspected Organism died in once its Cell no
+    /// longer holds it. With `revive`, after undo or redo, an Organism its
+    /// Cell holds again lives again; an edit instead always makes a new
+    /// Organism, even one painted with the same Genotype in the same
+    /// Generation.
+    fn follow_inspected(&mut self, revive: bool) {
+        let Some(organism) = &mut self.inspected else {
             return;
         };
-        let alive = self.cells[followed.index].is_some_and(|genotype| {
-            self.born[followed.index] == followed.born
-                && genotype.map(|slot| self.tree.allele(slot)) == followed.alleles()
+        let lives = self.cells[organism.index].is_some_and(|genotype| {
+            self.born[organism.index] == organism.birth_generation
+                && genotype.map(|slot| self.tree.allele(slot)) == organism.alleles()
         });
-        if alive {
-            followed.died = None;
-        } else if followed.died.is_none() {
-            followed.died = Some(self.generation);
+        if !lives {
+            organism.death_generation.get_or_insert(self.generation);
+        } else if revive {
+            organism.death_generation = None;
         }
     }
 
     /// The inspection of the Organism being followed, if any.
     pub fn inspection(&self) -> Option<Inspection> {
-        let followed = self.inspected.as_ref()?;
+        let organism = self.inspected.as_ref()?;
         let tally = self.tally();
-        Some(followed.inspection(self.width, |id| {
+        Some(organism.inspection(self.width, |id| {
             self.tree.slot(id).map(|slot| tally[slot.index()].status())
         }))
     }
@@ -855,7 +860,7 @@ impl Tally {
 }
 
 /// The Birth Generation of each live Cell, in row-major order.
-fn live_births<'a>(
+fn live_birth_generations<'a>(
     cells: &'a [Option<Genotype>],
     born: &'a [u64],
 ) -> impl Iterator<Item = u64> + 'a {

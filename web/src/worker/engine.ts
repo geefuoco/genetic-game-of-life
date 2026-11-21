@@ -21,8 +21,8 @@ export interface EngineWorld {
   redo(): boolean;
   canUndo(): boolean;
   canRedo(): boolean;
-  /** Follows the Organism at a Cell for the inspector and returns its packed inspection, or nothing if the Cell is dead. */
-  inspect(x: number, y: number): Float64Array | undefined;
+  /** Follows the Organism at a Cell for the inspector, or nothing if the Cell is dead. */
+  inspect(x: number, y: number): void;
   /** The followed Organism's inspection, packed as the WASM `WebWorld` documents, if any. */
   inspection(): Float64Array | undefined;
   stopInspecting(): void;
@@ -108,33 +108,33 @@ export class Engine {
         break;
       case 'paint': {
         const genotype = packed(command.genotype);
-        this.edit((world) => {
+        this.change((world) => {
           for (const [x, y] of command.cells) world.paint(x, y, genotype);
         });
         break;
       }
       case 'erase':
-        this.edit((world) => {
+        this.change((world) => {
           for (const [x, y] of command.cells) world.erase(x, y);
         });
         break;
       case 'stamp':
-        this.edit((world) => world.stamp(command.pattern, command.x, command.y, packed(command.genotype)));
+        this.change((world) => world.stamp(command.pattern, command.x, command.y, packed(command.genotype)));
         break;
       case 'end-stroke':
         this.world?.endStroke();
         break;
       case 'undo':
-        this.edit((world) => world.undo());
+        this.change((world) => world.undo());
         break;
       case 'redo':
-        this.edit((world) => world.redo());
+        this.change((world) => world.redo());
         break;
       case 'inspect':
-        this.edit((world) => world.inspect(command.x, command.y));
+        this.change((world) => world.inspect(command.x, command.y));
         break;
       case 'stop-inspecting':
-        this.edit((world) => world.stopInspecting());
+        this.change((world) => world.stopInspecting());
         break;
       case 'release':
         if (command.phenotypes.length === this.cells) {
@@ -187,11 +187,11 @@ export class Engine {
     this.options.send({ type: 'rule', rule: running }, []);
   }
 
-  /** Changes the World between Generations and shows the result, reporting a change the core refuses. */
-  private edit(change: (world: EngineWorld) => void): void {
+  /** Changes the World, or what it inspects, between Generations and shows the result, reporting a change the core refuses. */
+  private change(apply: (world: EngineWorld) => void): void {
     if (!this.world) return;
     try {
-      change(this.world);
+      apply(this.world);
     } catch (error) {
       this.options.send({ type: 'error', message: messageOf(error) }, []);
     }
@@ -287,13 +287,18 @@ function packed([first, second]: Genotype): Float64Array {
   return Float64Array.of(first.hue, first.dominance, second.hue, second.dominance);
 }
 
+/** Allele statuses by the number the World packs them as. */
 const STATUSES: readonly AlleleStatus[] = ['living', 'hidden', 'extinct'];
 
-/** An inspection as the World packs it, unpacked. */
+/** An inspection as the World packs it, unpacked; throws if it does not follow the packed layout. */
 function unpackInspection(packed: Float64Array | undefined): Inspection | null {
   if (!packed) return null;
   let at = 0;
-  const next = (): number => packed[at++] ?? Number.NaN;
+  const next = (): number => {
+    const value = packed[at++];
+    if (value === undefined) throw new Error(`a packed inspection ends after ${packed.length} numbers`);
+    return value;
+  };
   const [x, y, birthGeneration, deathGeneration, phenotype] = [next(), next(), next(), next(), next()];
   const allele = (): InspectedAllele => {
     const shown = next() === 1;
@@ -301,13 +306,20 @@ function unpackInspection(packed: Float64Array | undefined): Inspection | null {
       hue: next(),
       dominance: next(),
       origin: next(),
-      status: STATUSES[next()] ?? 'extinct',
+      status: status(next()),
     }));
-    const { hue, dominance } = lineage[0] ?? { hue: Number.NaN, dominance: Number.NaN };
-    return { hue, dominance, shown, lineage };
+    const own = lineage[0];
+    if (!own) throw new Error('a packed inspection has an Allele with an empty lineage');
+    return { hue: own.hue, dominance: own.dominance, shown, lineage };
   };
   const alleles = [allele(), allele()] as const;
   return { x, y, birthGeneration, deathGeneration: deathGeneration < 0 ? null : deathGeneration, phenotype, alleles };
+}
+
+function status(packed: number): AlleleStatus {
+  const named = STATUSES[packed];
+  if (!named) throw new Error(`${packed} is not a packed Allele status`);
+  return named;
 }
 
 function messageOf(error: unknown): string {

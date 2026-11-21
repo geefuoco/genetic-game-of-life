@@ -65,7 +65,7 @@ fn an_inspected_organisms_death_is_reported_and_a_later_organism_in_its_cell_is_
 }
 
 #[test]
-fn a_painted_organism_is_born_in_the_generation_it_was_painted_in() {
+fn a_painted_organisms_birth_generation_is_the_generation_it_was_painted_in() {
     let mut world = blinker();
     world.run(4);
     world.paint(10, 10, [ORANGE, JADE]).unwrap();
@@ -147,4 +147,17 @@ fn stopping_inspection_follows_nothing() {
     world.inspect(5, 5).unwrap().unwrap();
     world.stop_inspecting();
     assert_eq!(world.inspection(), None);
+}
+
+#[test]
+fn erasing_and_repainting_the_same_genotype_in_one_generation_makes_a_new_organism() {
+    let mut world = blinker();
+    world.paint(10, 10, [ORANGE, ORANGE]).unwrap();
+    world.end_stroke();
+    world.inspect(10, 10).unwrap().unwrap();
+    world.erase(10, 10).unwrap();
+    world.end_stroke();
+    world.paint(10, 10, [ORANGE, ORANGE]).unwrap();
+    world.end_stroke();
+    assert_eq!(world.inspection().unwrap().death_generation, Some(0));
 }

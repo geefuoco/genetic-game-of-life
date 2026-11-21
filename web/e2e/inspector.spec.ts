@@ -29,7 +29,7 @@ test('clicking an Organism shows its Genotype, and the inspector stays with it t
   await expect(genes.getByRole('img', { name: 'Strength 3 of 4, strong' })).toBeVisible();
   await expect(genes.getByRole('img', { name: 'Strength 1 of 4, weakest' })).toBeVisible();
   await expect(inspector.getByRole('list', { name: 'Lineage of the red colour gene, oldest first' })).toContainText(
-    `painted gen ${painted.toLocaleString()}`,
+    `added gen ${painted.toLocaleString()}`,
   );
   await expect(inspector).toContainText(`Born at generation ${painted.toLocaleString()}`);
 
@@ -58,11 +58,20 @@ test('the inspector is reached with Tab and closed with its button or Escape', a
   await expect(inspector).toBeHidden();
 });
 
-test('clicking a dead Cell inspects nothing', async ({ page }) => {
+test('clicking a dead Cell inspects nothing, and clicking outside the World closes the inspector', async ({ page }) => {
   await openPaused(page);
   await paintLoneCarrier(page);
   const dead = centreOf(84, 84);
   await page.mouse.click(dead.x, dead.y);
   await page.waitForTimeout(300);
   await expect(page.getByRole('region', { name: /cell$/ })).toHaveCount(0);
+
+  const cell = centreOf(80, 80);
+  await page.mouse.click(cell.x, cell.y);
+  const inspector = page.getByRole('region', { name: 'Red cell' });
+  await expect(inspector).toBeVisible();
+  const zoomOut = page.getByRole('button', { name: 'Zoom out' });
+  for (let i = 0; i < 12; i++) await zoomOut.click();
+  await page.mouse.click(60, 450);
+  await expect(inspector).toBeHidden();
 });

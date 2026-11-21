@@ -145,5 +145,6 @@ Friendlier words the app may show players in place of glossary terms. Code, docs
 | colour gene | Allele; UI copy only, so the Pigment's "Color gene" avoid still holds in code and docs |
 | a colour name, such as "orange" | an Allele or Phenotype whose hue falls in that colour's range |
 | colour | Phenotype |
+| strength, stronger | Dominance Level, higher Dominance Level; UI copy only, so the Dominance Level's "Strength" avoid still holds in code and docs |
 | gen | Generation |
 | alive | live Cells |

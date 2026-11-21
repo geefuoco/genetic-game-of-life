@@ -36,17 +36,18 @@ pub struct InspectedAllele {
 
 /// The Organism a World follows for its inspector.
 #[derive(Debug, Clone)]
-pub(crate) struct Followed {
+pub(crate) struct InspectedOrganism {
+    /// Row-major index of its Cell.
     pub(crate) index: usize,
-    pub(crate) born: u64,
+    pub(crate) birth_generation: u64,
     /// Each Allele's lineage, starting with the Allele, as it stood when
     /// inspection began; Alleles never change their source or origin, only
     /// their status.
     pub(crate) lineages: [Vec<AlleleNode>; 2],
-    pub(crate) died: Option<u64>,
+    pub(crate) death_generation: Option<u64>,
 }
 
-impl Followed {
+impl InspectedOrganism {
     /// The Organism's Genotype.
     pub(crate) fn alleles(&self) -> [Allele; 2] {
         self.lineages.each_ref().map(|lineage| lineage[0].allele)
@@ -76,8 +77,8 @@ impl Followed {
         Inspection {
             x: self.index % width,
             y: self.index / width,
-            birth_generation: self.born,
-            death_generation: self.died,
+            birth_generation: self.birth_generation,
+            death_generation: self.death_generation,
             alleles: [allele(0, shows_a), allele(1, shows_b)],
             phenotype: phenotype(a, b),
         }

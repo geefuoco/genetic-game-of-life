@@ -1,0 +1,3 @@
+# Birth Generations are part of Snapshots
+
+Each live Cell records the Birth Generation of its Organism, and Snapshots carry it (format version 3; version 2 is no longer read). Unlike Pedigrees (ADR-0003), a Birth Generation is one number per live Cell, so it costs a bounded 8 bytes per live Cell rather than growing with history, and without it an imported World could not say when any of its Organisms were Born, nor tell an inspected Organism from a later one in the same Cell. Birth Generations never change which Cells live, so a Snapshot without them would still resume a run exactly; they are included for the inspector, not for determinism.
