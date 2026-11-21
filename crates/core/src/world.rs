@@ -1,8 +1,10 @@
 use crate::allele_tree::{AlleleId, AlleleNode, AlleleStatus, AlleleTree, Slot};
+use crate::edit::{EditHistory, Stroke};
 use crate::genetics::{
     phenotype, shows, wrap, Allele, AlleleCensus, Census, Genotype, DEAD_PHENOTYPE, MAX_DOMINANCE,
 };
 use crate::mutation::MutationSettings;
+use crate::pattern::Pattern;
 use crate::rng::Rng;
 use crate::rule::Rule;
 use crate::snapshot::{self, invalid, Reader, SnapshotError, Writer};
@@ -65,8 +67,9 @@ impl std::error::Error for WorldError {}
 /// A fixed-size torus of Cells running a Rule, Conway's Life (B3/S23) by default.
 ///
 /// Cells are processed in row-major order. The seeded PRNG is part of the
-/// World's state.
-#[derive(Debug, Clone, PartialEq)]
+/// World's state. The edit history is not, so Worlds that differ only in
+/// what can be undone or redone are equal.
+#[derive(Debug, Clone)]
 pub struct World {
     width: usize,
     height: usize,
@@ -77,6 +80,33 @@ pub struct World {
     rule: Rule,
     mutation: MutationSettings,
     rng: Rng,
+    edits: EditHistory,
+}
+
+impl PartialEq for World {
+    fn eq(&self, other: &Self) -> bool {
+        let Self {
+            width,
+            height,
+            cells,
+            tree,
+            population_history,
+            generation,
+            rule,
+            mutation,
+            rng,
+            edits: _,
+        } = self;
+        *width == other.width
+            && *height == other.height
+            && *cells == other.cells
+            && *tree == other.tree
+            && *population_history == other.population_history
+            && *generation == other.generation
+            && *rule == other.rule
+            && *mutation == other.mutation
+            && *rng == other.rng
+    }
 }
 
 impl World {
@@ -198,6 +228,7 @@ impl World {
             rule: Rule::default(),
             mutation: MutationSettings::default(),
             rng,
+            edits: EditHistory::default(),
         }
     }
 
@@ -289,11 +320,12 @@ impl World {
             rule,
             mutation,
             rng,
+            edits: EditHistory::default(),
         })
     }
 
     /// Applies the Rule once to every Cell simultaneously, then prunes the
-    /// Allele Tree.
+    /// Allele Tree and clears the edit history.
     ///
     /// A Birth draws its Parent and Allele choices, then any Allele Pool
     /// draws, then the Mutation draws for the first and then the second Allele
@@ -313,7 +345,7 @@ impl World {
     /// draws its hue shift and then its Dominance Level.
     pub fn step(&mut self) {
         let cells = std::mem::take(&mut self.cells);
-        let pool = AllelePool::new(&cells, self.tree.founding_count());
+        let pool = AllelePool::new(&cells, self.tree.founding().to_vec());
         let mut next = vec![None; cells.len()];
         for y in 0..self.height {
             for x in 0..self.width {
@@ -337,6 +369,7 @@ impl World {
         self.population_history.push(self.population());
         self.tree
             .prune(self.cells.iter().flatten().flatten().copied());
+        self.edits.clear();
     }
 
     fn birth(&mut self, parents: &[Genotype], pool: &AllelePool) -> Genotype {
@@ -373,6 +406,140 @@ impl World {
             dominance: pick(&mut self.rng, MAX_DOMINANCE as usize + 1) as u8,
         };
         self.tree.add_mutant(slot, mutant, self.generation + 1)
+    }
+
+    /// Makes the Cell at `(x, y)` live with `genotype`, as part of the open
+    /// stroke. Its Alleles are brush Alleles: Founding Alleles originating in
+    /// the current Generation, reusing any Founding Allele with the same hue
+    /// and Dominance Level.
+    pub fn paint(&mut self, x: usize, y: usize, genotype: [Allele; 2]) -> Result<(), WorldError> {
+        let index = self.index_of(x, y)?;
+        let slots = self.brush(genotype)?;
+        self.edit_cell(index, Some(slots));
+        Ok(())
+    }
+
+    /// Makes the Cell at `(x, y)` dead, as part of the open stroke.
+    pub fn erase(&mut self, x: usize, y: usize) -> Result<(), WorldError> {
+        let index = self.index_of(x, y)?;
+        self.edit_cell(index, None);
+        Ok(())
+    }
+
+    /// Stamps `pattern` in `genotype` as part of the open stroke, with the
+    /// Pattern's middle Cell (half its width and height, rounded down) at
+    /// `(x, y)`. Every Cell of the Pattern's bounding box takes the
+    /// Pattern's state, wrapping across the World's edges. Its Alleles are
+    /// brush Alleles, as for [`World::paint`].
+    pub fn stamp(
+        &mut self,
+        pattern: Pattern,
+        x: usize,
+        y: usize,
+        genotype: [Allele; 2],
+    ) -> Result<(), WorldError> {
+        self.index_of(x, y)?;
+        let slots = self.brush(genotype)?;
+        let (width, height) = pattern.size();
+        let left = x + self.width - width / 2 % self.width;
+        let top = y + self.height - height / 2 % self.height;
+        for (dx, dy, live) in pattern.cells() {
+            let index = (top + dy) % self.height * self.width + (left + dx) % self.width;
+            self.edit_cell(index, live.then_some(slots));
+        }
+        Ok(())
+    }
+
+    /// Closes the open stroke, so the next edit starts a new one. Undo and
+    /// redo act on whole strokes.
+    pub fn end_stroke(&mut self) {
+        self.edits.end_stroke();
+    }
+
+    /// Reverts the latest stroke not yet undone in this Generation, closing
+    /// the open stroke first. Returns whether there was one.
+    pub fn undo(&mut self) -> bool {
+        let Some(mut stroke) = self.edits.take_undo() else {
+            return false;
+        };
+        self.swap_in(&mut stroke);
+        self.edits.undone(stroke);
+        true
+    }
+
+    /// Reapplies the latest undone stroke. Returns whether there was one.
+    pub fn redo(&mut self) -> bool {
+        let Some(mut stroke) = self.edits.take_redo() else {
+            return false;
+        };
+        self.swap_in(&mut stroke);
+        self.edits.redone(stroke);
+        true
+    }
+
+    /// Whether [`World::undo`] would revert a stroke. Advancing a Generation
+    /// clears the edit history.
+    pub fn can_undo(&self) -> bool {
+        self.edits.can_undo()
+    }
+
+    /// Whether [`World::redo`] would reapply a stroke.
+    pub fn can_redo(&self) -> bool {
+        self.edits.can_redo()
+    }
+
+    fn swap_in(&mut self, stroke: &mut Stroke) {
+        for (&index, cell) in &mut stroke.cells {
+            *cell = self.replace_cell(index, *cell);
+        }
+        if let Some(tree) = &mut stroke.tree {
+            std::mem::swap(tree, &mut self.tree);
+        }
+    }
+
+    /// Sets the Cell at `index` as part of the open stroke.
+    fn edit_cell(&mut self, index: usize, cell: Option<Genotype>) {
+        if self.cells[index] != cell {
+            let before = self.replace_cell(index, cell);
+            self.edits.record_cell(index, before);
+        }
+    }
+
+    /// Sets the Cell at `index`, keeping the current Generation's population
+    /// up to date, and returns what it held.
+    fn replace_cell(&mut self, index: usize, cell: Option<Genotype>) -> Option<Genotype> {
+        let old = std::mem::replace(&mut self.cells[index], cell);
+        let population = self
+            .population_history
+            .last_mut()
+            .expect("the history holds the current Generation");
+        match (old.is_some(), cell.is_some()) {
+            (false, true) => *population += 1,
+            (true, false) => *population -= 1,
+            _ => {}
+        }
+        old
+    }
+
+    /// The slots of the brush Alleles in `genotype`.
+    fn brush(&mut self, genotype: [Allele; 2]) -> Result<Genotype, WorldError> {
+        if let Some(&invalid) = genotype.iter().find(|allele| !allele.is_valid()) {
+            return Err(WorldError::InvalidAllele(invalid));
+        }
+        Ok(genotype.map(|allele| {
+            self.tree.find_founding(allele).unwrap_or_else(|| {
+                self.edits.record_tree(&self.tree);
+                self.tree.add_founding(allele, self.generation)
+            })
+        }))
+    }
+
+    fn index_of(&self, x: usize, y: usize) -> Result<usize, WorldError> {
+        if x < self.width && y < self.height {
+            Ok(y * self.width + x)
+        } else {
+            Err(WorldError::CellOutOfBounds { x, y })
+        }
     }
 
     /// Applies the Rule `generations` times.
@@ -540,17 +707,17 @@ impl World {
 /// Generation, gathered on the first draw.
 struct AllelePool<'a> {
     cells: &'a [Option<Genotype>],
-    founding_count: usize,
+    founding: Vec<Slot>,
     live: OnceCell<Vec<Genotype>>,
 }
 
 impl<'a> AllelePool<'a> {
-    /// The pool of `cells`, falling back to the first `founding_count`
-    /// slots, the Founding Alleles, when no Cell is live.
-    fn new(cells: &'a [Option<Genotype>], founding_count: usize) -> Self {
+    /// The pool of `cells`, falling back to the `founding` slots, the
+    /// Founding Alleles, when no Cell is live.
+    fn new(cells: &'a [Option<Genotype>], founding: Vec<Slot>) -> Self {
         Self {
             cells,
-            founding_count,
+            founding,
             live: OnceCell::new(),
         }
     }
@@ -563,7 +730,7 @@ impl<'a> AllelePool<'a> {
             .live
             .get_or_init(|| self.cells.iter().flatten().copied().collect());
         if live.is_empty() {
-            return Slot::at(pick(rng, self.founding_count));
+            return self.founding[pick(rng, self.founding.len())];
         }
         let genotype = live[pick(rng, live.len())];
         genotype[pick(rng, 2)]

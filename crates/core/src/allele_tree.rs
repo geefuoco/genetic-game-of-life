@@ -66,13 +66,14 @@ struct Entry {
 ///
 /// Founding Alleles are always retained, so the empty-World fallback of
 /// Allele Pool draws can still find them. Any other Allele is pruned once no
-/// live Cell carries it or any of its descendants; a later mutant may take
+/// live Cell carries it or any of its descendants; a later Allele may take
 /// its slot under a new [`AlleleId`].
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct AlleleTree {
     entries: Vec<Entry>,
     free: Vec<Slot>,
-    founding_count: usize,
+    /// The Founding Alleles' slots, in ascending order.
+    founding: Vec<Slot>,
 }
 
 impl AlleleTree {
@@ -91,7 +92,7 @@ impl AlleleTree {
                 })
                 .collect(),
             free: vec![],
-            founding_count: alleles.len(),
+            founding: (0..alleles.len()).map(Slot::at).collect(),
         }
     }
 
@@ -104,16 +105,15 @@ impl AlleleTree {
 
     /// Writes the tree in the Snapshot payload layout.
     pub(crate) fn encode(&self, writer: &mut Writer) {
-        writer.index(self.founding_count);
         writer.index(self.entries.len());
-        for (index, entry) in self.entries.iter().enumerate() {
+        for entry in &self.entries {
             writer.u32(entry.version);
             writer.u8(u8::from(entry.record.is_some()));
             if let Some(record) = entry.record {
                 writer.f64(record.allele.hue);
                 writer.u8(record.allele.dominance);
-                if index >= self.founding_count {
-                    let source = record.source.expect("every mutant has a source");
+                writer.u8(u8::from(record.source.is_some()));
+                if let Some(source) = record.source {
                     writer.index(source.index());
                 }
                 writer.u64(record.origin);
@@ -128,30 +128,14 @@ impl AlleleTree {
     /// Reads a tree written by [`AlleleTree::encode`], rejecting any tree the
     /// World could not have built.
     pub(crate) fn decode(reader: &mut Reader) -> Result<Self, SnapshotError> {
-        let founding_count = reader.index()?;
         let slot_count = reader.index()?;
-        if founding_count == 0 || founding_count > slot_count {
-            return Err(invalid(format!(
-                "founding allele count {founding_count} is outside 1..={slot_count}, the slot count"
-            )));
-        }
         reader.expect_items(slot_count as u64, 5)?;
         let mut entries = Vec::with_capacity(slot_count);
         for index in 0..slot_count {
             let version = reader.u32()?;
             let record = match reader.u8()? {
-                0 if index < founding_count => {
-                    return Err(invalid(format!(
-                        "founding allele slot {index} is not retained"
-                    )))
-                }
                 0 => None,
-                1 => Some(Self::decode_record(
-                    reader,
-                    index,
-                    founding_count,
-                    slot_count,
-                )?),
+                1 => Some(Self::decode_record(reader, index, slot_count)?),
                 flag => {
                     return Err(invalid(format!(
                         "allele slot {index} has retained flag {flag}, expected 0 or 1"
@@ -188,10 +172,17 @@ impl AlleleTree {
                 "an empty allele slot is missing from the free slots",
             ));
         }
+        let founding: Vec<Slot> = (0..slot_count)
+            .filter(|&index| entries[index].record.is_some_and(|r| r.source.is_none()))
+            .map(Slot::at)
+            .collect();
+        if founding.is_empty() {
+            return Err(invalid("the allele tree has no founding allele"));
+        }
         let tree = Self {
             entries,
             free,
-            founding_count,
+            founding,
         };
         tree.check_sources()?;
         Ok(tree)
@@ -200,7 +191,6 @@ impl AlleleTree {
     fn decode_record(
         reader: &mut Reader,
         index: usize,
-        founding_count: usize,
         slot_count: usize,
     ) -> Result<Record, SnapshotError> {
         let allele = Allele {
@@ -213,16 +203,22 @@ impl AlleleTree {
                 allele.hue, allele.dominance
             )));
         }
-        let source = if index < founding_count {
-            None
-        } else {
-            let source = reader.index()?;
-            if source >= slot_count {
-                return Err(invalid(format!(
-                    "allele slot {index} mutated from slot {source}, beyond the slot count {slot_count}"
-                )));
+        let source = match reader.u8()? {
+            0 => None,
+            1 => {
+                let source = reader.index()?;
+                if source >= slot_count {
+                    return Err(invalid(format!(
+                        "allele slot {index} mutated from slot {source}, beyond the slot count {slot_count}"
+                    )));
+                }
+                Some(Slot::at(source))
             }
-            Some(Slot::at(source))
+            flag => {
+                return Err(invalid(format!(
+                    "allele slot {index} has source flag {flag}, expected 0 or 1"
+                )))
+            }
         };
         Ok(Record {
             allele,
@@ -235,7 +231,9 @@ impl AlleleTree {
     /// retained Alleles back to a Founding Allele.
     fn check_sources(&self) -> Result<(), SnapshotError> {
         let mut rooted = vec![false; self.entries.len()];
-        rooted[..self.founding_count].fill(true);
+        for slot in &self.founding {
+            rooted[slot.index()] = true;
+        }
         for start in 0..self.entries.len() {
             if rooted[start] || self.entries[start].record.is_none() {
                 continue;
@@ -264,9 +262,30 @@ impl AlleleTree {
         Ok(())
     }
 
-    /// Number of Founding Alleles; they occupy slots `0..founding_count()`.
-    pub(crate) fn founding_count(&self) -> usize {
-        self.founding_count
+    /// The Founding Alleles' slots, in ascending order.
+    pub(crate) fn founding(&self) -> &[Slot] {
+        &self.founding
+    }
+
+    /// The slot of the Founding Allele with the same hue and Dominance Level
+    /// as `allele`, if there is one.
+    pub(crate) fn find_founding(&self, allele: Allele) -> Option<Slot> {
+        self.founding
+            .iter()
+            .copied()
+            .find(|&slot| self.allele(slot) == allele)
+    }
+
+    /// Records a new Founding Allele originating in Generation `origin`.
+    pub(crate) fn add_founding(&mut self, allele: Allele, origin: u64) -> Slot {
+        let slot = self.add(Record {
+            allele,
+            source: None,
+            origin,
+        });
+        let at = self.founding.partition_point(|s| s.index() < slot.index());
+        self.founding.insert(at, slot);
+        slot
     }
 
     /// One more than the highest slot index in use.
@@ -299,11 +318,15 @@ impl AlleleTree {
 
     /// Records a new Allele that mutated from `source` in Generation `origin`.
     pub(crate) fn add_mutant(&mut self, source: Slot, allele: Allele, origin: u64) -> Slot {
-        let record = Some(Record {
+        self.add(Record {
             allele,
             source: Some(source),
             origin,
-        });
+        })
+    }
+
+    fn add(&mut self, record: Record) -> Slot {
+        let record = Some(record);
         match self.free.pop() {
             Some(slot) => {
                 let entry = &mut self.entries[slot.index()];

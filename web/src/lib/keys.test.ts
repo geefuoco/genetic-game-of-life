@@ -6,6 +6,7 @@ const press = (key: string, extra: Partial<KeyPress> = {}): KeyPress => ({
   ctrlKey: false,
   metaKey: false,
   altKey: false,
+  shiftKey: false,
   editable: false,
   ...extra,
 });
@@ -38,6 +39,27 @@ describe('keys', () => {
     expect(keyAction(press('d', { ctrlKey: true }))).toBeNull();
     expect(keyAction(press('d', { metaKey: true }))).toBeNull();
     expect(keyAction(press('.', { altKey: true }))).toBeNull();
+  });
+
+  it('undoes with Ctrl+Z or Cmd+Z', () => {
+    expect(keyAction(press('z', { ctrlKey: true }))).toBe('undo');
+    expect(keyAction(press('z', { metaKey: true }))).toBe('undo');
+  });
+
+  it('redoes with Ctrl+Shift+Z, Cmd+Shift+Z or Ctrl+Y', () => {
+    expect(keyAction(press('Z', { ctrlKey: true, shiftKey: true }))).toBe('redo');
+    expect(keyAction(press('z', { metaKey: true, shiftKey: true }))).toBe('redo');
+    expect(keyAction(press('y', { ctrlKey: true }))).toBe('redo');
+  });
+
+  it('leaves undo and redo to an input that has focus', () => {
+    expect(keyAction(press('z', { ctrlKey: true, editable: true }))).toBeNull();
+    expect(keyAction(press('y', { ctrlKey: true, editable: true }))).toBeNull();
+  });
+
+  it('ignores Z without Ctrl or Cmd, and with Alt', () => {
+    expect(keyAction(press('z'))).toBeNull();
+    expect(keyAction(press('z', { ctrlKey: true, altKey: true }))).toBeNull();
   });
 
   it('ignores other keys', () => {

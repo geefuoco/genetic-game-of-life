@@ -1,6 +1,8 @@
 //! Snapshots: export a World's full state and import it to resume the run.
 
-use genetic_life_core::{AlleleStatus, MutationSettings, Rule, SnapshotError, World};
+use genetic_life_core::{
+    Allele, AlleleStatus, MutationSettings, Pattern, Rule, SnapshotError, World,
+};
 use proptest::prelude::*;
 
 fn soup(seed: u64) -> World {
@@ -25,17 +27,17 @@ fn notation(birth: u16, survival: u16) -> String {
 /// The Snapshot header: the marker and the little-endian format version.
 const HEADER: usize = 8;
 
-/// Byte offset of the PRNG algorithm version in a version 1 payload.
+/// Byte offset of the PRNG algorithm version in a version 2 payload.
 const RNG_VERSION_OFFSET: usize = 36;
 
 fn payload(snapshot: &[u8]) -> Vec<u8> {
     miniz_oxide::inflate::decompress_to_vec_zlib(&snapshot[HEADER..]).unwrap()
 }
 
-/// A version 1 Snapshot holding `payload`.
+/// A version 2 Snapshot holding `payload`.
 fn sealed(payload: &[u8]) -> Vec<u8> {
     let mut bytes = b"GGLS".to_vec();
-    bytes.extend(1u32.to_le_bytes());
+    bytes.extend(2u32.to_le_bytes());
     bytes.extend(miniz_oxide::deflate::compress_to_vec_zlib(payload, 6));
     bytes
 }
@@ -44,6 +46,24 @@ fn sealed(payload: &[u8]) -> Vec<u8> {
 fn an_imported_snapshot_is_the_exported_world() {
     let world = soup(9);
     let imported = World::from_snapshot(&world.snapshot()).unwrap();
+    assert_eq!(imported, world);
+}
+
+/// Brush Alleles are Founding Alleles that can sit after mutants in the
+/// Allele Tree, and an Allele Pool draw in an empty World can pick them.
+#[test]
+fn a_painted_world_continues_identically_after_import() {
+    let mut world = soup(4);
+    let brush = Allele {
+        hue: 300.0,
+        dominance: 3,
+    };
+    world.stamp(Pattern::Glider, 5, 5, [brush, brush]).unwrap();
+    world.end_stroke();
+    let mut imported = World::from_snapshot(&world.snapshot()).unwrap();
+    assert_eq!(imported, world);
+    world.run(20);
+    imported.run(20);
     assert_eq!(imported, world);
 }
 
@@ -57,16 +77,16 @@ fn a_snapshot_is_compressed() {
 fn a_snapshot_starts_with_its_marker_and_format_version() {
     let bytes = soup(1).snapshot();
     assert_eq!(&bytes[..4], b"GGLS");
-    assert_eq!(bytes[4..HEADER], 1u32.to_le_bytes());
+    assert_eq!(bytes[4..HEADER], 2u32.to_le_bytes());
 }
 
 #[test]
 fn an_unknown_format_version_is_rejected() {
     let mut bytes = soup(2).snapshot();
-    bytes[4..HEADER].copy_from_slice(&2u32.to_le_bytes());
+    bytes[4..HEADER].copy_from_slice(&3u32.to_le_bytes());
     let error = World::from_snapshot(&bytes).unwrap_err();
-    assert_eq!(error, SnapshotError::UnsupportedVersion(2));
-    assert!(error.to_string().contains("version 2"), "{error}");
+    assert_eq!(error, SnapshotError::UnsupportedVersion(3));
+    assert!(error.to_string().contains("version 3"), "{error}");
 }
 
 #[test]
@@ -148,7 +168,7 @@ fn a_truncated_payload_is_rejected() {
 /// Dominance Level, source slot and origin Generation.
 type SlotSpec = (u32, Option<(f64, u8, Option<u32>, u64)>);
 
-/// A version 1 payload built field by field from the documented layout,
+/// A version 2 payload built field by field from the documented layout,
 /// independently of the World's own encoder.
 #[derive(Clone)]
 struct Payload {
@@ -161,7 +181,6 @@ struct Payload {
     magnitude: f64,
     rng_version: u32,
     rng_state: u64,
-    founding: u32,
     slots: Vec<SlotSpec>,
     free: Vec<u32>,
     cells: Vec<(u32, u32, u32)>,
@@ -182,7 +201,6 @@ impl Payload {
             magnitude: 40.0,
             rng_version: 1,
             rng_state: 42,
-            founding: 1,
             slots: vec![
                 (0, Some((10.0, 0, None, 0))),
                 (3, Some((130.0, 2, Some(0), 1))),
@@ -205,16 +223,16 @@ impl Payload {
         p.extend(self.magnitude.to_le_bytes());
         p.extend(self.rng_version.to_le_bytes());
         p.extend(self.rng_state.to_le_bytes());
-        p.extend(self.founding.to_le_bytes());
         p.extend((self.slots.len() as u32).to_le_bytes());
-        for (index, (version, record)) in self.slots.iter().enumerate() {
+        for (version, record) in &self.slots {
             p.extend(version.to_le_bytes());
             p.push(u8::from(record.is_some()));
             if let Some((hue, dominance, source, origin)) = record {
                 p.extend(hue.to_le_bytes());
                 p.push(*dominance);
-                if index >= self.founding as usize {
-                    p.extend(source.unwrap_or(u32::MAX).to_le_bytes());
+                p.push(u8::from(source.is_some()));
+                if let Some(source) = source {
+                    p.extend(source.to_le_bytes());
                 }
                 p.extend(origin.to_le_bytes());
             }
@@ -258,16 +276,12 @@ fn a_snapshot_built_from_the_documented_layout_imports() {
 #[test]
 fn a_payload_describing_no_valid_world_is_rejected() {
     type Damage = fn(&mut Payload);
-    let cases: [(&str, Damage); 16] = [
+    let cases: [(&str, Damage); 15] = [
         ("world too small", |p| p.width = 8),
         ("rule count above 8", |p| p.birth |= 1 << 9),
         ("mutation rate above 1", |p| p.rate = 2.0),
-        ("no founding alleles", |p| p.founding = 0),
-        ("founding allele not retained", |p| {
-            p.founding = 2;
-            p.slots[1].1 = None;
-            p.free = vec![1, 2];
-            p.cells = vec![(17, 0, 0), (18, 0, 0)];
+        ("no founding alleles", |p| {
+            p.slots[0].1 = Some((10.0, 0, Some(1), 0))
         }),
         ("allele hue out of range", |p| {
             p.slots[1].1 = Some((360.0, 2, Some(0), 1))

@@ -28,6 +28,23 @@ export interface SoupSettings {
   mutation: MutationSettings;
 }
 
+/** One variant of the Pigment Gene. */
+export interface Allele {
+  /** Hue in degrees, from 0 up to but not including 360. */
+  hue: number;
+  /** Dominance Level, a whole number from 0 to 3. */
+  dominance: number;
+}
+
+/** The pair of Alleles a live Cell carries. */
+export type Genotype = readonly [Allele, Allele];
+
+/** A Cell's column and row. */
+export type CellPosition = readonly [x: number, y: number];
+
+/** The Patterns the core's library can stamp, by the core's names. */
+export type PatternName = 'glider' | 'lwss' | 'r-pentomino' | 'gosper-gun';
+
 /** Generations per second, or `'max'` for as fast as the worker can go. */
 export type Rate = number | 'max';
 
@@ -39,6 +56,16 @@ export type Command =
   | { type: 'set-rate'; rate: Rate }
   | { type: 'set-rule'; rule: string }
   | { type: 'set-mutation'; mutation: MutationSettings }
+  /** Makes `cells` live with `genotype`, as part of the open edit stroke. */
+  | { type: 'paint'; cells: readonly CellPosition[]; genotype: Genotype }
+  /** Makes `cells` dead, as part of the open edit stroke. */
+  | { type: 'erase'; cells: readonly CellPosition[] }
+  /** Stamps a Pattern centred on a Cell, as part of the open edit stroke. */
+  | { type: 'stamp'; pattern: PatternName; x: number; y: number; genotype: Genotype }
+  /** Closes the open edit stroke; undo and redo act on whole strokes. */
+  | { type: 'end-stroke' }
+  | { type: 'undo' }
+  | { type: 'redo' }
   | { type: 'release'; phenotypes: Float32Array };
 
 /** One drawable state of the World. */
@@ -50,6 +77,10 @@ export interface Frame {
   height: number;
   /** One Phenotype hue per Cell in row-major order; dead Cells are negative. */
   phenotypes: Float32Array;
+  /** Whether an edit stroke of this Generation can be undone. */
+  canUndo: boolean;
+  /** Whether an undone edit stroke can be redone. */
+  canRedo: boolean;
 }
 
 export type WorkerEvent =

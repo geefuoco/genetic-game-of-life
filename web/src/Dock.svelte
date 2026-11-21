@@ -1,9 +1,19 @@
 <script lang="ts">
+  import type { Tool } from './lib/brush.ts';
+
   interface Props {
     running: boolean;
     speed: string;
     docked: boolean;
     settingsOpen: boolean;
+    tool: Tool;
+    /** CSS colours of the brush's Alleles: one, or two for the Carrier brush. */
+    brushColours: readonly string[];
+    canUndo: boolean;
+    canRedo: boolean;
+    ontool: (tool: Tool) => void;
+    onundo: () => void;
+    onredo: () => void;
     ontoggleplay: () => void;
     onstep: () => void;
     onfaster: () => void;
@@ -14,7 +24,31 @@
     ontogglesettings: () => void;
   }
 
-  let { running, speed, docked, settingsOpen, ontoggleplay, onstep, onfaster, onslower, onzoomin, onzoomout, ontoggledock, ontogglesettings }: Props = $props();
+  let {
+    running,
+    speed,
+    docked,
+    settingsOpen,
+    tool,
+    brushColours,
+    canUndo,
+    canRedo,
+    ontool,
+    onundo,
+    onredo,
+    ontoggleplay,
+    onstep,
+    onfaster,
+    onslower,
+    onzoomin,
+    onzoomout,
+    ontoggledock,
+    ontogglesettings,
+  }: Props = $props();
+
+  const dot = $derived(
+    brushColours.length > 1 ? `linear-gradient(90deg, ${brushColours[0]} 50%, ${brushColours[1]} 50%)` : (brushColours[0] ?? 'transparent'),
+  );
 
   let dockToggle: HTMLButtonElement;
   let settingsToggle: HTMLButtonElement | undefined = $state();
@@ -64,6 +98,46 @@
       onclick={onSpeedClick}
       oncontextmenu={onSpeedMenu}>{speed}</button
     >
+  </div>
+  <span class="sep" aria-hidden="true"></span>
+  <div class="group" role="group" aria-label="Tools">
+    <button type="button" aria-label="Look" title="Look: drag to move" aria-pressed={tool === 'look'} class:on={tool === 'look'} onclick={() => ontool('look')}>
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+        ><path d="M8 1.5v13M1.5 8h13M6 3.5l2-2 2 2M6 12.5l2 2 2-2M3.5 6l-2 2 2 2M12.5 6l2 2-2 2" /></svg
+      >
+    </button>
+    <button type="button" aria-label="Paint" title="Paint: drag to paint cells" aria-pressed={tool === 'paint'} class:on={tool === 'paint'} onclick={() => ontool('paint')}>
+      <span class="dot" style:background={dot} aria-hidden="true"></span>
+    </button>
+    <button type="button" aria-label="Erase" title="Erase: drag to erase cells" aria-pressed={tool === 'erase'} class:on={tool === 'erase'} onclick={() => ontool('erase')}>
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"
+        ><path d="M9.5 2.5l4 4-6.5 6.5H4.5l-2-2z" /><path d="M6 6l4 4M7 13h6.5" stroke-linecap="round" /></svg
+      >
+    </button>
+    <button type="button" aria-label="Stamp a pattern" title="Stamp: click to stamp the chosen pattern" aria-pressed={tool === 'stamp'} class:on={tool === 'stamp'} onclick={() => ontool('stamp')}>
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"
+        ><rect x="6.5" y="2" width="3" height="3" rx="0.8" /><rect x="11" y="6.5" width="3" height="3" rx="0.8" /><rect x="2" y="11" width="3" height="3" rx="0.8" /><rect
+          x="6.5"
+          y="11"
+          width="3"
+          height="3"
+          rx="0.8"
+        /><rect x="11" y="11" width="3" height="3" rx="0.8" /></svg
+      >
+    </button>
+  </div>
+  <span class="sep" aria-hidden="true"></span>
+  <div class="group">
+    <button type="button" aria-label="Undo" title="Undo (Ctrl+Z)" disabled={!canUndo} onclick={onundo}>
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+        ><path d="M5.5 3L2.5 6l3 3" /><path d="M2.5 6h7a4 4 0 010 8H7" /></svg
+      >
+    </button>
+    <button type="button" aria-label="Redo" title="Redo (Ctrl+Shift+Z)" disabled={!canRedo} onclick={onredo}>
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+        ><path d="M10.5 3l3 3-3 3" /><path d="M13.5 6h-7a4 4 0 000 8H9" /></svg
+      >
+    </button>
   </div>
   <span class="sep" aria-hidden="true"></span>
   <div class="group">
@@ -117,8 +191,10 @@
 <style>
   .dock {
     display: flex;
+    flex-wrap: wrap;
     gap: 2px;
     align-items: center;
+    justify-content: center;
     padding: 6px;
     border-radius: 16px;
   }
@@ -141,10 +217,22 @@
       color 0.12s;
   }
 
-  button:hover,
+  button:hover:enabled,
   button.on {
     color: #fff;
     background: rgb(255 255 255 / 8%);
+  }
+
+  button:disabled {
+    cursor: default;
+    opacity: 0.35;
+  }
+
+  .dot {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    box-shadow: 0 0 0 2px rgb(255 255 255 / 22%);
   }
 
   .speed {

@@ -2,7 +2,7 @@
 //!
 //! A Snapshot is the 4 bytes `GGLS`, the format version as a little-endian
 //! `u32`, then a zlib stream (with its checksum) holding the payload. Every
-//! payload number is little-endian. Version 1 lays the payload out as:
+//! payload number is little-endian. Version 2 lays the payload out as:
 //!
 //! - width and height, `u32` each
 //! - Generation, `u64`
@@ -10,10 +10,11 @@
 //!   `n` qualifies
 //! - Mutation rate and magnitude, `f64` each
 //! - PRNG algorithm version, `u32`, and PRNG state, `u64`
-//! - Allele Tree: Founding Allele count and slot count, `u32` each; per slot
-//!   its id version, `u32`, and a retained flag, `u8`; a retained slot then
-//!   holds its hue, `f64`, Dominance Level, `u8`, the slot it mutated from,
-//!   `u32`, for slots past the Founding Alleles only, and its origin
+//! - Allele Tree: slot count, `u32`; per slot its id version, `u32`, and a
+//!   retained flag, `u8`; a retained slot then holds its hue, `f64`,
+//!   Dominance Level, `u8`, a source flag, `u8`, that is 0 for a Founding
+//!   Allele and 1 for an Allele that mutated from another, followed in that
+//!   case by the slot it mutated from, `u32`, and then its origin
 //!   Generation, `u64`; then the free slot count, `u32`, and the free slots,
 //!   `u32` each, in the order they were freed
 //! - live Cell count, `u32`; per live Cell, in row-major order, its row-major
@@ -24,7 +25,7 @@ use miniz_oxide::inflate::TINFLStatus;
 use std::fmt;
 
 /// Version of the Snapshot format written by [`crate::World::snapshot`].
-pub const SNAPSHOT_VERSION: u32 = 1;
+pub const SNAPSHOT_VERSION: u32 = 2;
 
 const MAGIC: [u8; 4] = *b"GGLS";
 

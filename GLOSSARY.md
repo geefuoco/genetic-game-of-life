@@ -87,7 +87,7 @@ Every Allele carried by the live Cells, counted once per copy; a Birth with fewe
 _Avoid_: Gene pool, random allele
 
 **Founding Allele**:
-An Allele present at Generation 0, with no Allele it descends from.
+An Allele with no Allele it descends from: present at Generation 0, or brought in later by painting or stamping, originating in the Generation it was painted.
 _Avoid_: Root allele, original
 
 **Allele Tree**:

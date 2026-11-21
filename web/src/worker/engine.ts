@@ -1,4 +1,4 @@
-import type { Command, Rate, SoupSettings, WorkerEvent } from '../protocol.ts';
+import type { Command, Genotype, Rate, SoupSettings, WorkerEvent } from '../protocol.ts';
 
 /** The World as the engine drives it; in the worker, the WASM `WebWorld`. */
 export interface EngineWorld {
@@ -10,6 +10,17 @@ export interface EngineWorld {
   setRule(rule: string): string;
   /** Switches the Mutation settings; throws the core's explanation if they are out of range. */
   setMutation(rate: number, magnitude: number): void;
+  /** Paints a Cell with a Genotype given as `[hue, dominance, hue, dominance]`, in the open stroke. */
+  paint(x: number, y: number, genotype: Float64Array): void;
+  /** Erases a Cell, in the open stroke. */
+  erase(x: number, y: number): void;
+  /** Stamps a named Pattern centred on a Cell, in the open stroke. */
+  stamp(pattern: string, x: number, y: number, genotype: Float64Array): void;
+  endStroke(): void;
+  undo(): boolean;
+  redo(): boolean;
+  canUndo(): boolean;
+  canRedo(): boolean;
   free(): void;
 }
 
@@ -90,6 +101,30 @@ export class Engine {
       case 'set-mutation':
         this.world?.setMutation(command.mutation.rate, command.mutation.magnitude);
         break;
+      case 'paint': {
+        const genotype = packed(command.genotype);
+        this.edit((world) => {
+          for (const [x, y] of command.cells) world.paint(x, y, genotype);
+        });
+        break;
+      }
+      case 'erase':
+        this.edit((world) => {
+          for (const [x, y] of command.cells) world.erase(x, y);
+        });
+        break;
+      case 'stamp':
+        this.edit((world) => world.stamp(command.pattern, command.x, command.y, packed(command.genotype)));
+        break;
+      case 'end-stroke':
+        this.world?.endStroke();
+        break;
+      case 'undo':
+        this.edit((world) => world.undo());
+        break;
+      case 'redo':
+        this.edit((world) => world.redo());
+        break;
       case 'release':
         if (command.phenotypes.length === this.cells) {
           this.free.push(command.phenotypes);
@@ -139,6 +174,17 @@ export class Engine {
       return;
     }
     this.options.send({ type: 'rule', rule: running }, []);
+  }
+
+  /** Changes the World between Generations and shows the result, reporting a change the core refuses. */
+  private edit(change: (world: EngineWorld) => void): void {
+    if (!this.world) return;
+    try {
+      change(this.world);
+    } catch (error) {
+      this.options.send({ type: 'error', message: messageOf(error) }, []);
+    }
+    this.publish();
   }
 
   private pause(): void {
@@ -216,10 +262,17 @@ export class Engine {
         width: this.width,
         height: this.height,
         phenotypes: buffer,
+        canUndo: world.canUndo(),
+        canRedo: world.canRedo(),
       },
       [buffer.buffer],
     );
   }
+}
+
+/** A Genotype as the World takes it: `[hue, dominance, hue, dominance]`. */
+function packed([first, second]: Genotype): Float64Array {
+  return Float64Array.of(first.hue, first.dominance, second.hue, second.dominance);
 }
 
 function messageOf(error: unknown): string {

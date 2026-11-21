@@ -2,8 +2,10 @@
 //! configurable Rule (Conway's Life by default) from a seeded Soup.
 
 mod allele_tree;
+mod edit;
 mod genetics;
 mod mutation;
+mod pattern;
 mod rng;
 mod rule;
 mod snapshot;
@@ -13,6 +15,7 @@ mod world;
 pub use allele_tree::{AlleleId, AlleleNode, AlleleStatus};
 pub use genetics::{Allele, AlleleCensus, Census, DEAD_PHENOTYPE, MAX_DOMINANCE};
 pub use mutation::{MutationError, MutationSettings};
+pub use pattern::Pattern;
 pub use rng::Rng;
 pub use rule::{Rule, RuleError};
 pub use snapshot::{SnapshotError, SNAPSHOT_VERSION};

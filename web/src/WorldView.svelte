@@ -1,17 +1,27 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { openingCamera, panBy, resizeViewport, zoomAt, type Camera, type Size } from './lib/camera.ts';
+  import type { Tool } from './lib/brush.ts';
+  import { openingCamera, panBy, resizeViewport, screenToCell, zoomAt, type Camera, type Point, type Size } from './lib/camera.ts';
   import { Renderer } from './lib/renderer.ts';
-  import type { Frame } from './protocol.ts';
+  import { cellsAlong } from './lib/stroke.ts';
+  import type { CellPosition, Frame } from './protocol.ts';
 
   interface Props {
+    /** What pressing and dragging on the World does. */
+    tool: Tool;
     /** Called once on mount with whether WebGL2 is available. */
     onsupport: (supported: boolean) => void;
     /** Called with each frame's buffer once it has been drawn or superseded. */
     onrelease: (phenotypes: Float32Array) => void;
+    /** Called with the Cells a press or drag of the paint or erase tool passes over. */
+    onstroke: (cells: CellPosition[]) => void;
+    /** Called with the Cell the stamp tool is pressed on. */
+    onstamp: (cell: CellPosition) => void;
+    /** Called when a press of an editing tool ends, closing its edit stroke. */
+    onstrokeend: () => void;
   }
 
-  let { onsupport, onrelease }: Props = $props();
+  let { tool, onsupport, onrelease, onstroke, onstamp, onstrokeend }: Props = $props();
 
   /** Wheel zoom per pixel of scroll. */
   const WHEEL_ZOOM = 0.002;
@@ -26,6 +36,9 @@
   let pending: Frame | null = null;
   let dirty = false;
   let drag: { x: number; y: number } | null = null;
+  /** Where the paint or erase tool last was during a press, in Cell coordinates. */
+  let brushAt: Point | null = null;
+  let editing = false;
   let grabbing = $state(false);
 
   /** Shows `frame` from the next animation frame on. */
@@ -63,14 +76,41 @@
     renderer.draw({ camera, viewport, pixelRatio: window.devicePixelRatio || 1 });
   }
 
+  /** The fractional Cell coordinates under a pointer, or `null` before the first frame. */
+  function cellAt(event: PointerEvent): Point | null {
+    if (!camera || !world) return null;
+    const bounds = canvas.getBoundingClientRect();
+    return screenToCell(camera, world, { x: event.clientX - bounds.left, y: event.clientY - bounds.top });
+  }
+
   function onpointerdown(event: PointerEvent): void {
     if (event.button !== 0) return;
     canvas.setPointerCapture(event.pointerId);
-    drag = { x: event.clientX, y: event.clientY };
-    grabbing = true;
+    if (tool === 'look') {
+      drag = { x: event.clientX, y: event.clientY };
+      grabbing = true;
+      return;
+    }
+    const at = cellAt(event);
+    if (!at || !world) return;
+    editing = true;
+    if (tool === 'stamp') {
+      onstamp([Math.floor(at.x), Math.floor(at.y)]);
+      return;
+    }
+    brushAt = at;
+    onstroke(cellsAlong(at, at, world));
   }
 
   function onpointermove(event: PointerEvent): void {
+    if (brushAt && world) {
+      const at = cellAt(event);
+      if (!at) return;
+      const cells = cellsAlong(brushAt, at, world).slice(1);
+      brushAt = at;
+      if (cells.length > 0) onstroke(cells);
+      return;
+    }
     if (!drag || !camera || !world) return;
     camera = panBy(camera, world, event.clientX - drag.x, event.clientY - drag.y);
     drag = { x: event.clientX, y: event.clientY };
@@ -80,6 +120,11 @@
   function endDrag(): void {
     drag = null;
     grabbing = false;
+    brushAt = null;
+    if (editing) {
+      editing = false;
+      onstrokeend();
+    }
   }
 
   function onwheel(event: WheelEvent): void {
@@ -120,6 +165,7 @@
 <canvas
   bind:this={canvas}
   class:grabbing
+  class:editing={tool !== 'look'}
   aria-label="The World"
   {onpointerdown}
   {onpointermove}
@@ -140,5 +186,9 @@
 
   canvas.grabbing {
     cursor: grabbing;
+  }
+
+  canvas.editing {
+    cursor: crosshair;
   }
 </style>
