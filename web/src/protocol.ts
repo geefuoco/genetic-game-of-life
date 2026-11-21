@@ -139,6 +139,8 @@ export type Command =
   | { type: 'pedigree'; depth: number }
   /** Sets the memory budget of Recorded History, kept for later Soups too. */
   | { type: 'set-pedigree-budget'; bytes: number }
+  /** Starts or stops census events; the worker only takes a census while the page watches it. */
+  | { type: 'watch-census'; watching: boolean }
   | { type: 'release'; phenotypes: Float32Array };
 
 /** One drawable state of the World. */
@@ -158,8 +160,30 @@ export interface Frame {
   inspection: Inspection | null;
 }
 
+/** How many live Cells carry an Allele, and how many show or hide it. */
+export interface AlleleCensus extends Allele {
+  /** Copies carried by live Cells; a live Cell carrying it twice counts twice. */
+  copies: number;
+  /** Live Cells whose Phenotype shows it; a blend shows both its Alleles. */
+  shown: number;
+  /** Live Cells carrying it that their Phenotype does not show. */
+  hidden: number;
+}
+
+/** The genetic state of the World at one Generation, sent while the page watches it, at most a few times a second. */
+export interface Census {
+  type: 'census';
+  generation: number;
+  population: number;
+  /** Every Allele carried by a live Cell, shown or hidden. */
+  alleles: AlleleCensus[];
+  /** The population at each Generation from 0 to this one. */
+  populationHistory: Uint32Array;
+}
+
 export type WorkerEvent =
   | Frame
+  | Census
   | { type: 'error'; message: string }
   /** The inspected Organism's Pedigree after a `pedigree` command, or `null` if nothing is inspected. */
   | { type: 'pedigree'; pedigree: Pedigree | null; depth: number }

@@ -1,5 +1,7 @@
 import type {
+  AlleleCensus,
   AlleleStatus,
+  Census,
   Command,
   Genotype,
   InspectedAllele,
@@ -42,6 +44,10 @@ export interface EngineWorld {
   pedigree(depth: number): Float64Array | undefined;
   /** Sets the memory budget of Recorded History in bytes; throws the core's explanation if it is too large. */
   setPedigreeBudget(bytes: number): void;
+  /** The census of living Alleles, packed as the WASM `WebWorld` documents. */
+  census(): Float64Array;
+  /** The population at each Generation from 0 to the current one. */
+  populationHistory(): Uint32Array;
   free(): void;
 }
 
@@ -65,6 +71,8 @@ const SLICE_MS = 16;
 const BUFFERS = 2;
 /** Guards against a due Generation being missed through rounding. */
 const EPSILON = 1e-9;
+/** Shortest time between two censuses, in ms. */
+const CENSUS_MS = 250;
 
 /**
  * Runs the simulation for the worker: handles the page's commands, steps the
@@ -88,6 +96,10 @@ export class Engine {
   private paceDone = 0;
   /** The memory budget of Recorded History each World gets, or `null` for the core's default. */
   private pedigreeBudget: number | null = null;
+  private watchingCensus = false;
+  private censusSentAt = -Infinity;
+  /** The timer for a census held back so censuses stay {@link CENSUS_MS} apart. */
+  private censusTimer: number | null = null;
 
   constructor(options: EngineOptions) {
     this.options = options;
@@ -161,6 +173,11 @@ export class Engine {
         this.pedigreeBudget = command.bytes;
         this.change((world) => world.setPedigreeBudget(command.bytes));
         break;
+      case 'watch-census':
+        this.watchingCensus = command.watching;
+        this.cancelCensusTimer();
+        if (command.watching) this.sendCensus();
+        break;
       case 'release':
         if (command.phenotypes.length === this.cells) {
           this.free.push(command.phenotypes);
@@ -177,6 +194,8 @@ export class Engine {
     this.cells = 0;
     this.free = [];
     this.framePending = false;
+    this.cancelCensusTimer();
+    this.censusSentAt = -Infinity;
     let world: EngineWorld | null = null;
     try {
       world = this.options.createWorld(soup);
@@ -294,8 +313,44 @@ export class Engine {
     if (ran > 0) this.publish();
   }
 
-  /** Sends the current state if the page has handed back a buffer, otherwise as soon as it does. */
+  /** Sends a census of the current state if one is watched, held back until {@link CENSUS_MS} after the last. */
+  private scheduleCensus(): void {
+    if (!this.watchingCensus || this.censusTimer !== null) return;
+    const wait = this.censusSentAt + CENSUS_MS - this.options.clock.now();
+    if (wait <= 0) {
+      this.sendCensus();
+      return;
+    }
+    this.censusTimer = this.options.clock.setTimeout(() => {
+      this.censusTimer = null;
+      this.sendCensus();
+    }, wait);
+  }
+
+  private cancelCensusTimer(): void {
+    if (this.censusTimer !== null) {
+      this.options.clock.clearTimeout(this.censusTimer);
+      this.censusTimer = null;
+    }
+  }
+
+  private sendCensus(): void {
+    const world = this.world;
+    if (!world) return;
+    let census: Census;
+    try {
+      census = unpackCensus(world.census(), world.populationHistory());
+    } catch (error) {
+      this.options.send({ type: 'error', message: messageOf(error) }, []);
+      return;
+    }
+    this.censusSentAt = this.options.clock.now();
+    this.options.send(census, [census.populationHistory.buffer]);
+  }
+
+  /** Sends the current state if the page has handed back a buffer, otherwise as soon as it does, and a census if one is due. */
   private publish(): void {
+    this.scheduleCensus();
     const world = this.world;
     const buffer = this.free.pop();
     if (!world || !buffer) {
@@ -353,6 +408,22 @@ function unpackInspection(packed: Float64Array | undefined): Inspection | null {
   };
   const alleles = [allele(), allele()] as const;
   return { x, y, birthGeneration, deathGeneration: deathGeneration < 0 ? null : deathGeneration, phenotype, alleles };
+}
+
+/** A census as the World packs it, unpacked, with the population history; throws if it does not follow the packed layout. */
+function unpackCensus(packed: Float64Array, populationHistory: Uint32Array): Census {
+  let at = 0;
+  const next = (): number => {
+    const value = packed[at++];
+    if (value === undefined) throw new Error(`a packed census ends after ${packed.length} numbers`);
+    return value;
+  };
+  const [generation, population] = [next(), next()];
+  const alleles: AlleleCensus[] = [];
+  while (at < packed.length) {
+    alleles.push({ hue: next(), dominance: next(), copies: next(), shown: next(), hidden: next() });
+  }
+  return { type: 'census', generation, population, alleles, populationHistory };
 }
 
 /** Pedigree origins by the number the World packs them as. */

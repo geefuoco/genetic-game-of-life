@@ -167,6 +167,23 @@ impl WebWorld {
         self.world.population() as u32
     }
 
+    /// The census of living Alleles, packed as `[Generation, population]`
+    /// and then, per Allele carried by a live Cell in id order, `[hue,
+    /// dominance, copies, live Cells showing it, live Cells hiding it]`.
+    pub fn census(&self) -> Vec<f64> {
+        packed_census(&self.world)
+    }
+
+    /// Number of live Cells at each Generation from 0 to the current one.
+    #[wasm_bindgen(js_name = populationHistory)]
+    pub fn population_history(&self) -> Vec<u32> {
+        self.world
+            .population_history()
+            .iter()
+            .map(|&population| population as u32)
+            .collect()
+    }
+
     /// Writes one Phenotype hue per Cell into `out` in row-major order, with
     /// dead Cells as the core's dead Phenotype value.
     pub fn phenotypes(&self, out: &mut [f32]) -> Result<(), JsError> {
@@ -210,6 +227,21 @@ fn packed_inspection(inspection: &Inspection) -> Vec<f64> {
                 status,
             ]);
         }
+    }
+    packed
+}
+
+/// The census of `world` laid out as `WebWorld::census` documents.
+fn packed_census(world: &World) -> Vec<f64> {
+    let mut packed = vec![world.generation() as f64, world.population() as f64];
+    for line in world.living_alleles() {
+        packed.extend([
+            line.allele.hue,
+            f64::from(line.allele.dominance),
+            line.copies as f64,
+            line.shown as f64,
+            line.hidden as f64,
+        ]);
     }
     packed
 }

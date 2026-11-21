@@ -1,7 +1,9 @@
-import type { Command, Frame, Pedigree, WorkerEvent } from './protocol.ts';
+import type { Census, Command, Frame, Pedigree, WorkerEvent } from './protocol.ts';
 
 export interface SimulationHandlers {
   frame(frame: Frame): void;
+  /** The census of the World, while it is watched. */
+  census(census: Census): void;
   /** The Rule now running, in canonical notation. */
   rule(rule: string): void;
   /** A Rule the core refused, with its explanation. */
@@ -22,6 +24,9 @@ export class Simulation {
       switch (message.type) {
         case 'frame':
           handlers.frame(message);
+          break;
+        case 'census':
+          handlers.census(message);
           break;
         case 'rule':
           handlers.rule(message.rule);

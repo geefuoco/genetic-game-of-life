@@ -168,6 +168,7 @@ fn census_reports_copies_shown_hidden_and_fully_hidden_alleles() {
         (3, 1, 1)
     );
     assert!(census.fully_hidden.is_empty());
+    assert_eq!(world.living_alleles(), census.alleles);
 }
 
 #[test]
@@ -184,6 +185,7 @@ fn census_tracks_population_history_across_generations() {
     let census = world.census();
     assert_eq!(census.generation, 3);
     assert_eq!(census.population_history, vec![3, 3, 3, 3]);
+    assert_eq!(world.population_history(), [3, 3, 3, 3]);
 }
 
 #[test]

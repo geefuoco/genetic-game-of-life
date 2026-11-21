@@ -682,6 +682,11 @@ impl World {
         self.cells.iter().flatten().count()
     }
 
+    /// Population at Generations `0..=generation`, as in the [`Census`].
+    pub fn population_history(&self) -> &[usize] {
+        &self.population_history
+    }
+
     /// World width in Cells.
     pub fn width(&self) -> usize {
         self.width
@@ -851,8 +856,24 @@ impl World {
 
     /// The genetic state of the World.
     pub fn census(&self) -> Census {
-        let alleles: Vec<AlleleCensus> = self
-            .tally()
+        let alleles = self.living_alleles();
+        Census {
+            population: self.population(),
+            generation: self.generation,
+            fully_hidden: alleles
+                .iter()
+                .filter(|a| a.shown == 0)
+                .map(|a| a.allele)
+                .collect(),
+            alleles,
+            population_history: self.population_history.clone(),
+        }
+    }
+
+    /// Every living Allele in id order, as in the [`Census`], without
+    /// copying the population history.
+    pub fn living_alleles(&self) -> Vec<AlleleCensus> {
+        self.tally()
             .into_iter()
             .enumerate()
             .filter(|(_, tally)| tally.copies > 0)
@@ -866,18 +887,7 @@ impl World {
                     hidden: tally.hidden,
                 }
             })
-            .collect();
-        Census {
-            population: self.population(),
-            generation: self.generation,
-            fully_hidden: alleles
-                .iter()
-                .filter(|a| a.shown == 0)
-                .map(|a| a.allele)
-                .collect(),
-            alleles,
-            population_history: self.population_history.clone(),
-        }
+            .collect()
     }
 
     /// Copies, showing Cells and hiding Cells per Allele slot index.
