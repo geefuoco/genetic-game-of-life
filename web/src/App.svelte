@@ -1,15 +1,24 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import Dock from './Dock.svelte';
+  import Settings from './Settings.svelte';
   import WorldView from './WorldView.svelte';
   import { browserStorage, loadDocked, saveDocked } from './lib/dock.ts';
   import { keyAction, type KeyAction } from './lib/keys.ts';
+  import type { NewSoup, RuleStatus, SoupDraft } from './lib/settings.ts';
   import { DEFAULT_SPEED, SPEEDS, cycleSpeed, nudgeSpeed } from './lib/speed.ts';
-  import type { Frame, SoupSettings } from './protocol.ts';
+  import type { Frame, MutationSettings, SoupSettings } from './protocol.ts';
   import { Simulation } from './simulation.ts';
 
-  /** The Soup the page opens on, apart from its random Seed. */
-  const OPENING_SOUP: Omit<SoupSettings, 'seed'> = { width: 160, height: 160, density: 0.3, foundingAlleles: 8 };
+  /** The Soup the page opens on, apart from its random Seed: Conway's Life with the core's default Mutation. */
+  const OPENING_SOUP: Omit<SoupSettings, 'seed'> = {
+    rule: 'B3/S23',
+    width: 160,
+    height: 160,
+    density: 0.3,
+    foundingAlleles: 8,
+    mutation: { rate: 0.01, magnitude: 30 },
+  };
   /** How long the hint stays before fading, in ms. */
   const HINT_MS = 9000;
   /** Zoom factor of one press of a zoom button. */
@@ -22,9 +31,20 @@
   let population = $state(0);
   let hintShown = $state(true);
   let problem = $state<string | null>(null);
+  let settingsOpen = $state(false);
+  let rule = $state.raw<RuleStatus>({ running: OPENING_SOUP.rule, rejected: null });
+  let mutation = $state.raw<MutationSettings>(OPENING_SOUP.mutation);
+  let draft = $state<SoupDraft>({
+    foundingAlleles: OPENING_SOUP.foundingAlleles,
+    density: OPENING_SOUP.density,
+    width: OPENING_SOUP.width,
+    height: OPENING_SOUP.height,
+    seed: '',
+  });
   let supported = false;
   let view: WorldView;
   let dock: Dock;
+  let popover: HTMLElement | undefined = $state();
   let simulation: Simulation | null = null;
 
   const stats = $derived(`gen ${generation.toLocaleString()} · ${population.toLocaleString()} alive`);
@@ -50,6 +70,36 @@
     simulation?.send({ type: 'set-rate', rate: SPEEDS[index]!.rate });
   }
 
+  function randomSeed(): bigint {
+    return crypto.getRandomValues(new BigUint64Array(1))[0] ?? 0n;
+  }
+
+  function setRule(notation: string): void {
+    simulation?.send({ type: 'set-rule', rule: notation });
+  }
+
+  function setMutation(next: MutationSettings): void {
+    mutation = next;
+    simulation?.send({ type: 'set-mutation', mutation: next });
+  }
+
+  function newSoup(soup: NewSoup): void {
+    simulation?.send({ type: 'start', soup: { ...soup, rule: rule.running, mutation }, rate: SPEEDS[speed]!.rate, running });
+  }
+
+  async function toggleSettings(): Promise<void> {
+    if (settingsOpen) return closeSettings();
+    settingsOpen = true;
+    await tick();
+    popover?.querySelector<HTMLElement>('select, input, button')?.focus();
+  }
+
+  async function closeSettings(): Promise<void> {
+    settingsOpen = false;
+    await tick();
+    dock.focusSettingsToggle();
+  }
+
   async function toggleDock(refocus: boolean): Promise<void> {
     docked = !docked;
     saveDocked(browserStorage(), docked);
@@ -68,6 +118,11 @@
   }
 
   function onkeydown(event: KeyboardEvent): void {
+    if (event.key === 'Escape' && settingsOpen && !docked) {
+      event.preventDefault();
+      void closeSettings();
+      return;
+    }
     const action = actionOf(event);
     if (!action) return;
     event.preventDefault();
@@ -88,9 +143,15 @@
       problem = 'Genetic Life needs WebGL2, which this browser does not support or has turned off.';
       return;
     }
-    const seed = crypto.getRandomValues(new BigUint64Array(1))[0] ?? 0n;
+    const seed = randomSeed();
     simulation = new Simulation({
       frame: onFrame,
+      rule: (running) => {
+        rule = { running, rejected: null };
+      },
+      ruleRejected: (rejected) => {
+        rule = { running: rule.running, rejected };
+      },
       error: (message) => {
         problem = message;
       },
@@ -115,6 +176,7 @@
     {running}
     speed={SPEEDS[speed]!.label}
     {docked}
+    {settingsOpen}
     ontoggleplay={togglePlay}
     onstep={step}
     onfaster={() => setSpeed(cycleSpeed(speed, 1))}
@@ -122,7 +184,12 @@
     onzoomin={() => view.zoom(ZOOM_STEP)}
     onzoomout={() => view.zoom(1 / ZOOM_STEP)}
     ontoggledock={() => toggleDock(true)}
+    ontogglesettings={toggleSettings}
   />
+{/snippet}
+
+{#snippet settings()}
+  <Settings {rule} {mutation} bind:draft onrule={setRule} onmutation={setMutation} onnewsoup={newSoup} {randomSeed} />
 {/snippet}
 
 {#if problem}
@@ -140,6 +207,9 @@
     <p class="hint" class:gone={!hintShown}>drag to move · scroll to zoom</p>
     {#if !docked}
       <div class="floating">{@render controls()}</div>
+      {#if settingsOpen}
+        <div class="popover glass" id="settings-popover" role="dialog" aria-label="Settings" bind:this={popover}>{@render settings()}</div>
+      {/if}
     {/if}
   </main>
   <aside class="panel" aria-label="Side panel" hidden={!docked}>
@@ -150,6 +220,10 @@
       </header>
       {#if docked}
         {@render controls()}
+        <section class="panel-settings" aria-labelledby="panel-settings-title">
+          <h2 id="panel-settings-title">Settings</h2>
+          {@render settings()}
+        </section>
       {/if}
     </div>
   </aside>
@@ -231,6 +305,24 @@
     bottom: 32px;
     left: 50%;
     transform: translateX(-50%);
+  }
+
+  .popover {
+    position: absolute;
+    bottom: 100px;
+    left: 50%;
+    width: 340px;
+    max-height: calc(100% - 140px);
+    padding: 14px 16px;
+    overflow: auto;
+    border-radius: 14px;
+    transform: translateX(-50%);
+  }
+
+  .panel-settings h2 {
+    margin-bottom: 12px;
+    font-size: 13px;
+    font-weight: 600;
   }
 
   .panel {

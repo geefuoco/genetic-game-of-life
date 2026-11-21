@@ -1,12 +1,5 @@
 import { expect, test, type FrameLocator, type Page } from '@playwright/test';
-
-async function stats(scope: Page | FrameLocator): Promise<{ generation: number; population: number }> {
-  const text = (await scope.getByTestId('stats').textContent()) ?? '';
-  const match = /gen ([\d,]+) · ([\d,]+) alive/.exec(text);
-  if (!match) throw new Error(`unexpected stats line: ${text}`);
-  const number = (digits: string | undefined): number => Number((digits ?? '').replaceAll(',', ''));
-  return { generation: number(match[1]), population: number(match[2]) };
-}
+import { stats } from './stats.ts';
 
 const generation = async (scope: Page | FrameLocator): Promise<number> => (await stats(scope)).generation;
 
@@ -180,11 +173,11 @@ test('Space plays or pauses even while a dock button has focus', async ({ page }
 test('every control is reachable with Tab and labelled', async ({ page }) => {
   await open(page);
   const reached: string[] = [];
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 7; i++) {
     await page.keyboard.press('Tab');
     reached.push(await page.evaluate(() => document.activeElement?.getAttribute('aria-label') ?? ''));
   }
-  expect(reached).toEqual(['Pause', 'Step one generation', 'Speed 1×', 'Zoom out', 'Zoom in', 'Dock the controls to the side']);
+  expect(reached).toEqual(['Pause', 'Step one generation', 'Speed 1×', 'Zoom out', 'Zoom in', 'Settings', 'Dock the controls to the side']);
 });
 
 test('panning by a whole World width wraps round to the same view', async ({ page }) => {
