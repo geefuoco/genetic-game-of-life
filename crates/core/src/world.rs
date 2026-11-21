@@ -1,8 +1,9 @@
 use crate::allele_tree::{AlleleId, AlleleNode, AlleleStatus, AlleleTree, Slot};
-use crate::edit::{EditHistory, Stroke};
+use crate::edit::{CellState, EditHistory, Stroke};
 use crate::genetics::{
     phenotype, shows, wrap, Allele, AlleleCensus, Census, Genotype, DEAD_PHENOTYPE, MAX_DOMINANCE,
 };
+use crate::inspection::{Followed, Inspection};
 use crate::mutation::MutationSettings;
 use crate::pattern::Pattern;
 use crate::rng::Rng;
@@ -77,13 +78,17 @@ impl std::error::Error for WorldError {}
 /// A fixed-size torus of Cells running a Rule, Conway's Life (B3/S23) by default.
 ///
 /// Cells are processed in row-major order. The seeded PRNG is part of the
-/// World's state. The edit history is not, so Worlds that differ only in
-/// what can be undone or redone are equal.
+/// World's state. The edit history and the inspected Organism are not, so
+/// Worlds that differ only in what can be undone or redone, or in what is
+/// being inspected, are equal.
 #[derive(Debug, Clone)]
 pub struct World {
     width: usize,
     height: usize,
     cells: Vec<Option<Genotype>>,
+    /// The Birth Generation of each live Cell's Organism; meaningless for a
+    /// dead Cell.
+    born: Vec<u64>,
     tree: AlleleTree,
     population_history: Vec<usize>,
     generation: u64,
@@ -91,6 +96,7 @@ pub struct World {
     mutation: MutationSettings,
     rng: Rng,
     edits: EditHistory,
+    inspected: Option<Followed>,
 }
 
 impl PartialEq for World {
@@ -99,6 +105,7 @@ impl PartialEq for World {
             width,
             height,
             cells,
+            born,
             tree,
             population_history,
             generation,
@@ -106,10 +113,12 @@ impl PartialEq for World {
             mutation,
             rng,
             edits: _,
+            inspected: _,
         } = self;
         *width == other.width
             && *height == other.height
             && *cells == other.cells
+            && live_births(cells, born).eq(live_births(&other.cells, &other.born))
             && *tree == other.tree
             && *population_history == other.population_history
             && *generation == other.generation
@@ -231,6 +240,7 @@ impl World {
         Self {
             width,
             height,
+            born: vec![0; cells.len()],
             cells,
             tree: AlleleTree::founded(founding),
             population_history: vec![population],
@@ -239,6 +249,7 @@ impl World {
             mutation: MutationSettings::default(),
             rng,
             edits: EditHistory::default(),
+            inspected: None,
         }
     }
 
@@ -264,6 +275,7 @@ impl World {
                 writer.index(index);
                 writer.index(a.index());
                 writer.index(b.index());
+                writer.u64(self.born[index]);
             }
         }
         for &population in &self.population_history {
@@ -291,8 +303,9 @@ impl World {
         let rng = Rng::new(reader.u64()?);
         let tree = AlleleTree::decode(&mut reader)?;
         let population = reader.index()?;
-        reader.expect_items(population as u64, 12)?;
+        reader.expect_items(population as u64, 20)?;
         let mut cells = vec![None; width * height];
+        let mut born = vec![0; width * height];
         let mut lowest_allowed = 0;
         for _ in 0..population {
             let index = reader.index()?;
@@ -308,6 +321,13 @@ impl World {
                 )));
             }
             cells[index] = Some(genotype.map(Slot::at));
+            born[index] = reader.u64()?;
+            if born[index] > generation {
+                return Err(invalid(format!(
+                    "live cell {index} was born in generation {}, after generation {generation}",
+                    born[index]
+                )));
+            }
             lowest_allowed = index + 1;
         }
         reader.expect_items(generation, 4)?;
@@ -324,6 +344,7 @@ impl World {
             width,
             height,
             cells,
+            born,
             tree,
             population_history,
             generation,
@@ -331,6 +352,7 @@ impl World {
             mutation,
             rng,
             edits: EditHistory::default(),
+            inspected: None,
         })
     }
 
@@ -363,11 +385,13 @@ impl World {
                 let neighbours = self.neighbour_indices(x, y);
                 let count = neighbours.iter().filter(|&&i| cells[i].is_some()).count();
                 if self.rule.next_state(current.is_some(), count) {
-                    next[y * self.width + x] = Some(match current {
+                    let index = y * self.width + x;
+                    next[index] = Some(match current {
                         Some(genotype) => genotype,
                         None => {
                             let parents: Vec<Genotype> =
                                 neighbours.iter().filter_map(|&i| cells[i]).collect();
+                            self.born[index] = self.generation + 1;
                             self.birth(&parents, &pool)
                         }
                     });
@@ -380,6 +404,7 @@ impl World {
         self.tree
             .prune(self.cells.iter().flatten().flatten().copied());
         self.edits.clear();
+        self.follow_inspected();
     }
 
     fn birth(&mut self, parents: &[Genotype], pool: &AllelePool) -> Genotype {
@@ -509,25 +534,37 @@ impl World {
         if let Some(tree) = &mut stroke.tree {
             std::mem::swap(tree, &mut self.tree);
         }
+        self.follow_inspected();
     }
 
-    /// Sets the Cell at `index` as part of the open stroke.
+    /// Sets the Cell at `index` as part of the open stroke; a new live
+    /// Genotype is a new Organism, Born in the current Generation.
     fn edit_cell(&mut self, index: usize, cell: Option<Genotype>) {
         if self.cells[index] != cell {
-            let before = self.replace_cell(index, cell);
+            let state = CellState {
+                genotype: cell,
+                born: self.generation,
+            };
+            let before = self.replace_cell(index, state);
             self.edits.record_cell(index, before);
+            if self.inspected.as_ref().is_some_and(|f| f.index == index) {
+                self.follow_inspected();
+            }
         }
     }
 
     /// Sets the Cell at `index`, keeping the current Generation's population
     /// up to date, and returns what it held.
-    fn replace_cell(&mut self, index: usize, cell: Option<Genotype>) -> Option<Genotype> {
-        let old = std::mem::replace(&mut self.cells[index], cell);
+    fn replace_cell(&mut self, index: usize, state: CellState) -> CellState {
+        let old = CellState {
+            genotype: std::mem::replace(&mut self.cells[index], state.genotype),
+            born: std::mem::replace(&mut self.born[index], state.born),
+        };
         let population = self
             .population_history
             .last_mut()
             .expect("the history holds the current Generation");
-        match (old.is_some(), cell.is_some()) {
+        match (old.genotype.is_some(), state.genotype.is_some()) {
             (false, true) => *population += 1,
             (true, false) => *population -= 1,
             _ => {}
@@ -651,6 +688,53 @@ impl World {
         self.tree.lineage(id, |slot| tally[slot.index()].status())
     }
 
+    /// Starts following the Organism at `(x, y)` for its inspector and
+    /// returns its inspection; `None`, following nothing, if the Cell is dead.
+    pub fn inspect(&mut self, x: usize, y: usize) -> Result<Option<Inspection>, WorldError> {
+        let index = self.index_of(x, y)?;
+        self.inspected = self.cells[index].map(|genotype| Followed {
+            index,
+            born: self.born[index],
+            lineages: genotype.map(|slot| {
+                self.lineage(self.tree.id(slot))
+                    .expect("a live Cell's Alleles are retained")
+            }),
+            died: None,
+        });
+        Ok(self.inspection())
+    }
+
+    /// Stops following an Organism for its inspector.
+    pub fn stop_inspecting(&mut self) {
+        self.inspected = None;
+    }
+
+    /// Notes whether the followed Organism still lives: it has died once its
+    /// Cell no longer holds it, and lives again if undo or redo restores it.
+    fn follow_inspected(&mut self) {
+        let Some(followed) = &mut self.inspected else {
+            return;
+        };
+        let alive = self.cells[followed.index].is_some_and(|genotype| {
+            self.born[followed.index] == followed.born
+                && genotype.map(|slot| self.tree.allele(slot)) == followed.alleles()
+        });
+        if alive {
+            followed.died = None;
+        } else if followed.died.is_none() {
+            followed.died = Some(self.generation);
+        }
+    }
+
+    /// The inspection of the Organism being followed, if any.
+    pub fn inspection(&self) -> Option<Inspection> {
+        let followed = self.inspected.as_ref()?;
+        let tally = self.tally();
+        Some(followed.inspection(self.width, |id| {
+            self.tree.slot(id).map(|slot| tally[slot.index()].status())
+        }))
+    }
+
     /// One Phenotype hue per Cell in row-major order; dead Cells are
     /// [`DEAD_PHENOTYPE`].
     pub fn phenotypes(&self) -> Vec<f64> {
@@ -768,6 +852,18 @@ impl Tally {
             AlleleStatus::Hidden
         }
     }
+}
+
+/// The Birth Generation of each live Cell, in row-major order.
+fn live_births<'a>(
+    cells: &'a [Option<Genotype>],
+    born: &'a [u64],
+) -> impl Iterator<Item = u64> + 'a {
+    cells
+        .iter()
+        .zip(born)
+        .filter(|(cell, _)| cell.is_some())
+        .map(|(_, &born)| born)
 }
 
 /// Uniform index in `0..n` using one draw.

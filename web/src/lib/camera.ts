@@ -112,3 +112,16 @@ export function worldWindow(camera: Camera, world: Size, viewport: Size): Rect {
   const height = Math.min(viewport.height, world.height * camera.scale);
   return { x: (viewport.width - width) / 2, y: (viewport.height - height) / 2, width, height };
 }
+
+/**
+ * Where Cell `(x, y)` is drawn in the viewport, or `null` unless all of it
+ * is inside the World window.
+ */
+export function cellToScreen(camera: Camera, world: Size, viewport: Size, cell: Point): Rect | null {
+  const window = worldWindow(camera, world, viewport);
+  const left = window.x + wrap(camera.x + cell.x * camera.scale - window.x, world.width * camera.scale);
+  const top = window.y + wrap(camera.y + cell.y * camera.scale - window.y, world.height * camera.scale);
+  const slack = 0.001;
+  if (left + camera.scale > window.x + window.width + slack || top + camera.scale > window.y + window.height + slack) return null;
+  return { x: left, y: top, width: camera.scale, height: camera.scale };
+}

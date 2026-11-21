@@ -4,6 +4,7 @@
 mod allele_tree;
 mod edit;
 mod genetics;
+mod inspection;
 mod mutation;
 mod pattern;
 mod rng;
@@ -14,6 +15,7 @@ mod world;
 
 pub use allele_tree::{AlleleId, AlleleNode, AlleleStatus};
 pub use genetics::{Allele, AlleleCensus, Census, DEAD_PHENOTYPE, MAX_DOMINANCE};
+pub use inspection::{InspectedAllele, Inspection};
 pub use mutation::{MutationError, MutationSettings};
 pub use pattern::Pattern;
 pub use rng::Rng;

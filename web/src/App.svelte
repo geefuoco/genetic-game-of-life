@@ -2,6 +2,7 @@
   import { onMount, tick } from 'svelte';
   import Brush from './Brush.svelte';
   import Dock from './Dock.svelte';
+  import Inspector from './Inspector.svelte';
   import Settings from './Settings.svelte';
   import WorldView from './WorldView.svelte';
   import { DEFAULT_BRUSH, toolGenotype, type Brush as BrushSettings, type Tool } from './lib/brush.ts';
@@ -10,7 +11,8 @@
   import type { NewSoup, RuleStatus, SoupDraft } from './lib/settings.ts';
   import { DEFAULT_SPEED, SPEEDS, cycleSpeed, nudgeSpeed } from './lib/speed.ts';
   import { paletteCss } from './lib/palette.ts';
-  import type { CellPosition, Frame, MutationSettings, SoupSettings } from './protocol.ts';
+  import type { Rect } from './lib/camera.ts';
+  import type { CellPosition, Frame, Inspection, MutationSettings, SoupSettings } from './protocol.ts';
   import { Simulation } from './simulation.ts';
 
   /** The Soup the page opens on, apart from its random Seed: Conway's Life with the core's default Mutation. */
@@ -39,6 +41,12 @@
   let brush = $state<BrushSettings>(structuredClone(DEFAULT_BRUSH));
   let canUndo = $state(false);
   let canRedo = $state(false);
+  let inspection = $state.raw<Inspection | null>(null);
+  /** Whether frames' inspections are wanted: false once the inspector is closed, so frames already on their way cannot reopen it. */
+  let following = false;
+  let anchor = $state.raw<Rect | null>(null);
+  let stageWidth = $state(0);
+  let stageHeight = $state(0);
   let rule = $state.raw<RuleStatus>({ running: OPENING_SOUP.rule, rejected: null });
   let mutation = $state.raw<MutationSettings>(OPENING_SOUP.mutation);
   let draft = $state<SoupDraft>({
@@ -56,13 +64,27 @@
 
   const stats = $derived(`gen ${generation.toLocaleString()} · ${population.toLocaleString()} alive`);
   const brushColours = $derived([paletteCss(brush.first.hue), paletteCss(brush.second.hue)] as const);
+  const inspected = $derived(inspection && { x: inspection.x, y: inspection.y, dead: inspection.deathGeneration !== null });
 
   function onFrame(frame: Frame): void {
     generation = frame.generation;
     population = frame.population;
     canUndo = frame.canUndo;
     canRedo = frame.canRedo;
+    inspection = following ? frame.inspection : null;
     view.present(frame);
+  }
+
+  function inspect([x, y]: CellPosition): void {
+    following = true;
+    hintShown = false;
+    simulation?.send({ type: 'inspect', x, y });
+  }
+
+  function closeInspector(): void {
+    following = false;
+    inspection = null;
+    simulation?.send({ type: 'stop-inspecting' });
   }
 
   function stroke(cells: CellPosition[]): void {
@@ -164,6 +186,11 @@
       void closeSettings();
       return;
     }
+    if (event.key === 'Escape' && inspection) {
+      event.preventDefault();
+      closeInspector();
+      return;
+    }
     const action = actionOf(event);
     if (!action) return;
     event.preventDefault();
@@ -248,10 +275,13 @@
 {/if}
 
 <div class="app" class:docked hidden={problem !== null}>
-  <main class="stage">
+  <main class="stage" bind:clientWidth={stageWidth} bind:clientHeight={stageHeight}>
     <WorldView
       bind:this={view}
+      bind:anchor
       {tool}
+      {inspected}
+      oninspect={inspect}
       onsupport={(ok) => (supported = ok)}
       onrelease={(phenotypes) => simulation?.send({ type: 'release', phenotypes })}
       onstroke={stroke}
@@ -259,11 +289,14 @@
       onstrokeend={() => simulation?.send({ type: 'end-stroke' })}
     />
     <div class="vignette"></div>
+    {#if inspection}
+      <Inspector {inspection} {anchor} stage={{ width: stageWidth, height: stageHeight }} onclose={closeInspector} />
+    {/if}
     <header class="wordmark" aria-hidden={docked}>
       <h1>genetic life</h1>
       <p data-testid="stats">{stats}</p>
     </header>
-    <p class="hint" class:gone={!hintShown}>drag to move · scroll to zoom</p>
+    <p class="hint" class:gone={!hintShown}>click a cell to see its colour genes · drag to move · scroll to zoom</p>
     {#if !docked}
       <div class="floating">{@render controls()}</div>
       {#if settingsOpen}

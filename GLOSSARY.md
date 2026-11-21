@@ -14,6 +14,14 @@ _Avoid_: Board, grid, universe, map
 One position in the World, either live or dead at any moment; a live Cell carries a Genotype.
 _Avoid_: Pixel, tile, square
 
+**Organism**:
+One continuous life at a Cell, from its Birth, painting or stamping until the Cell dies or is painted over; identified by its Cell and its Birth Generation. Its Genotype belongs to it, not to the Cell.
+_Avoid_: Creature, individual, Cell (when one life is meant)
+
+**Birth Generation**:
+The Generation in which an Organism was Born, painted or stamped.
+_Avoid_: Age, birthday
+
 **Neighbour**:
 One of the eight Cells surrounding a given Cell, wrapping across World edges.
 _Avoid_: Adjacent cell

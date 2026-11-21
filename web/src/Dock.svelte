@@ -99,7 +99,7 @@
   </div>
   <span class="sep" aria-hidden="true"></span>
   <div class="group" role="group" aria-label="Tools">
-    <button type="button" aria-label="Look" title="Look: drag to move" aria-pressed={tool === 'look'} class:on={tool === 'look'} onclick={() => ontool('look')}>
+    <button type="button" aria-label="Look" title="Look: drag to move, click a cell to inspect" aria-pressed={tool === 'look'} class:on={tool === 'look'} onclick={() => ontool('look')}>
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
         ><path d="M8 1.5v13M1.5 8h13M6 3.5l2-2 2 2M6 12.5l2 2 2-2M3.5 6l-2 2 2 2M12.5 6l2 2-2 2" /></svg
       >

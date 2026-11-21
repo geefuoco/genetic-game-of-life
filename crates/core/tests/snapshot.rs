@@ -27,17 +27,17 @@ fn notation(birth: u16, survival: u16) -> String {
 /// The Snapshot header: the marker and the little-endian format version.
 const HEADER: usize = 8;
 
-/// Byte offset of the PRNG algorithm version in a version 2 payload.
+/// Byte offset of the PRNG algorithm version in a version 3 payload.
 const RNG_VERSION_OFFSET: usize = 36;
 
 fn payload(snapshot: &[u8]) -> Vec<u8> {
     miniz_oxide::inflate::decompress_to_vec_zlib(&snapshot[HEADER..]).unwrap()
 }
 
-/// A version 2 Snapshot holding `payload`.
+/// A version 3 Snapshot holding `payload`.
 fn sealed(payload: &[u8]) -> Vec<u8> {
     let mut bytes = b"GGLS".to_vec();
-    bytes.extend(2u32.to_le_bytes());
+    bytes.extend(3u32.to_le_bytes());
     bytes.extend(miniz_oxide::deflate::compress_to_vec_zlib(payload, 6));
     bytes
 }
@@ -77,16 +77,22 @@ fn a_snapshot_is_compressed() {
 fn a_snapshot_starts_with_its_marker_and_format_version() {
     let bytes = soup(1).snapshot();
     assert_eq!(&bytes[..4], b"GGLS");
-    assert_eq!(bytes[4..HEADER], 2u32.to_le_bytes());
+    assert_eq!(bytes[4..HEADER], 3u32.to_le_bytes());
 }
 
+/// Version 2, which lacked Birth Generations, is no longer read.
 #[test]
 fn an_unknown_format_version_is_rejected() {
-    let mut bytes = soup(2).snapshot();
-    bytes[4..HEADER].copy_from_slice(&3u32.to_le_bytes());
-    let error = World::from_snapshot(&bytes).unwrap_err();
-    assert_eq!(error, SnapshotError::UnsupportedVersion(3));
-    assert!(error.to_string().contains("version 3"), "{error}");
+    for version in [2, 4] {
+        let mut bytes = soup(2).snapshot();
+        bytes[4..HEADER].copy_from_slice(&u32::to_le_bytes(version));
+        let error = World::from_snapshot(&bytes).unwrap_err();
+        assert_eq!(error, SnapshotError::UnsupportedVersion(version));
+        assert!(
+            error.to_string().contains(&format!("version {version}")),
+            "{error}"
+        );
+    }
 }
 
 #[test]
@@ -168,7 +174,7 @@ fn a_truncated_payload_is_rejected() {
 /// Dominance Level, source slot and origin Generation.
 type SlotSpec = (u32, Option<(f64, u8, Option<u32>, u64)>);
 
-/// A version 2 payload built field by field from the documented layout,
+/// A version 3 payload built field by field from the documented layout,
 /// independently of the World's own encoder.
 #[derive(Clone)]
 struct Payload {
@@ -183,7 +189,7 @@ struct Payload {
     rng_state: u64,
     slots: Vec<SlotSpec>,
     free: Vec<u32>,
-    cells: Vec<(u32, u32, u32)>,
+    cells: Vec<(u32, u32, u32, u64)>,
     history: Vec<u32>,
 }
 
@@ -207,7 +213,7 @@ impl Payload {
                 (1, None),
             ],
             free: vec![2],
-            cells: vec![(17, 0, 1), (18, 1, 1)],
+            cells: vec![(17, 0, 1, 0), (18, 1, 1, 1)],
             history: vec![5, 2],
         }
     }
@@ -242,10 +248,11 @@ impl Payload {
             p.extend(slot.to_le_bytes());
         }
         p.extend((self.cells.len() as u32).to_le_bytes());
-        for (index, a, b) in &self.cells {
+        for (index, a, b, born) in &self.cells {
             p.extend(index.to_le_bytes());
             p.extend(a.to_le_bytes());
             p.extend(b.to_le_bytes());
+            p.extend(born.to_le_bytes());
         }
         for population in &self.history {
             p.extend(population.to_le_bytes());
@@ -256,7 +263,7 @@ impl Payload {
 
 #[test]
 fn a_snapshot_built_from_the_documented_layout_imports() {
-    let world = World::from_snapshot(&Payload::valid().snapshot()).unwrap();
+    let mut world = World::from_snapshot(&Payload::valid().snapshot()).unwrap();
     assert_eq!((world.width(), world.height()), (16, 16));
     assert_eq!(world.generation(), 1);
     assert_eq!(world.rule(), Rule::CONWAY);
@@ -271,12 +278,15 @@ fn a_snapshot_built_from_the_documented_layout_imports() {
     assert_eq!(tree[1].allele.dominance, 2);
     assert_eq!((tree[1].source, tree[1].origin), (Some(tree[0].id), 1));
     assert_eq!(tree[1].status, AlleleStatus::Living);
+    let births =
+        [(1, 1), (2, 1)].map(|(x, y)| world.inspect(x, y).unwrap().unwrap().birth_generation);
+    assert_eq!(births, [0, 1]);
 }
 
 #[test]
 fn a_payload_describing_no_valid_world_is_rejected() {
     type Damage = fn(&mut Payload);
-    let cases: [(&str, Damage); 15] = [
+    let cases: [(&str, Damage); 16] = [
         ("world too small", |p| p.width = 8),
         ("rule count above 8", |p| p.birth |= 1 << 9),
         ("mutation rate above 1", |p| p.rate = 2.0),
@@ -305,10 +315,13 @@ fn a_payload_describing_no_valid_world_is_rejected() {
         }),
         ("empty slot not freed", |p| p.free = vec![]),
         ("live cells out of order", |p| {
-            p.cells = vec![(18, 1, 1), (17, 0, 1)]
+            p.cells = vec![(18, 1, 1, 1), (17, 0, 1, 0)]
         }),
         ("live cell carries an empty slot", |p| {
-            p.cells[0] = (17, 0, 2)
+            p.cells[0] = (17, 0, 2, 0)
+        }),
+        ("live cell born after the current generation", |p| {
+            p.cells[0] = (17, 0, 1, 2)
         }),
         ("history ends with another population", |p| {
             p.history = vec![5, 3]
@@ -327,7 +340,7 @@ fn a_payload_describing_no_valid_world_is_rejected() {
 #[test]
 fn a_live_cell_listed_twice_is_rejected() {
     let mut payload = Payload::valid();
-    payload.cells = vec![(17, 0, 1), (17, 0, 1)];
+    payload.cells = vec![(17, 0, 1, 0), (17, 0, 1, 0)];
     assert!(matches!(
         World::from_snapshot(&payload.snapshot()),
         Err(SnapshotError::Invalid(_))

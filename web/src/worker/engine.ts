@@ -1,4 +1,4 @@
-import type { Command, Genotype, Rate, SoupSettings, WorkerEvent } from '../protocol.ts';
+import type { AlleleStatus, Command, Genotype, InspectedAllele, Inspection, Rate, SoupSettings, WorkerEvent } from '../protocol.ts';
 
 /** The World as the engine drives it; in the worker, the WASM `WebWorld`. */
 export interface EngineWorld {
@@ -21,6 +21,11 @@ export interface EngineWorld {
   redo(): boolean;
   canUndo(): boolean;
   canRedo(): boolean;
+  /** Follows the Organism at a Cell for the inspector and returns its packed inspection, or nothing if the Cell is dead. */
+  inspect(x: number, y: number): Float64Array | undefined;
+  /** The followed Organism's inspection, packed as the WASM `WebWorld` documents, if any. */
+  inspection(): Float64Array | undefined;
+  stopInspecting(): void;
   free(): void;
 }
 
@@ -124,6 +129,12 @@ export class Engine {
         break;
       case 'redo':
         this.edit((world) => world.redo());
+        break;
+      case 'inspect':
+        this.edit((world) => world.inspect(command.x, command.y));
+        break;
+      case 'stop-inspecting':
+        this.edit((world) => world.stopInspecting());
         break;
       case 'release':
         if (command.phenotypes.length === this.cells) {
@@ -264,6 +275,7 @@ export class Engine {
         phenotypes: buffer,
         canUndo: world.canUndo(),
         canRedo: world.canRedo(),
+        inspection: unpackInspection(world.inspection()),
       },
       [buffer.buffer],
     );
@@ -273,6 +285,29 @@ export class Engine {
 /** A Genotype as the World takes it: `[hue, dominance, hue, dominance]`. */
 function packed([first, second]: Genotype): Float64Array {
   return Float64Array.of(first.hue, first.dominance, second.hue, second.dominance);
+}
+
+const STATUSES: readonly AlleleStatus[] = ['living', 'hidden', 'extinct'];
+
+/** An inspection as the World packs it, unpacked. */
+function unpackInspection(packed: Float64Array | undefined): Inspection | null {
+  if (!packed) return null;
+  let at = 0;
+  const next = (): number => packed[at++] ?? Number.NaN;
+  const [x, y, birthGeneration, deathGeneration, phenotype] = [next(), next(), next(), next(), next()];
+  const allele = (): InspectedAllele => {
+    const shown = next() === 1;
+    const lineage = Array.from({ length: next() }, () => ({
+      hue: next(),
+      dominance: next(),
+      origin: next(),
+      status: STATUSES[next()] ?? 'extinct',
+    }));
+    const { hue, dominance } = lineage[0] ?? { hue: Number.NaN, dominance: Number.NaN };
+    return { hue, dominance, shown, lineage };
+  };
+  const alleles = [allele(), allele()] as const;
+  return { x, y, birthGeneration, deathGeneration: deathGeneration < 0 ? null : deathGeneration, phenotype, alleles };
 }
 
 function messageOf(error: unknown): string {

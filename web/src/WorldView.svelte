@@ -1,7 +1,18 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import type { Tool } from './lib/brush.ts';
-  import { openingCamera, panBy, resizeViewport, screenToCell, zoomAt, type Camera, type Point, type Size } from './lib/camera.ts';
+  import {
+    cellToScreen,
+    openingCamera,
+    panBy,
+    resizeViewport,
+    screenToCell,
+    zoomAt,
+    type Camera,
+    type Point,
+    type Rect,
+    type Size,
+  } from './lib/camera.ts';
   import { Renderer } from './lib/renderer.ts';
   import { cellsAlong } from './lib/stroke.ts';
   import type { CellPosition, Frame } from './protocol.ts';
@@ -19,14 +30,22 @@
     onstamp: (cell: CellPosition) => void;
     /** Called when a press of an editing tool ends, closing its edit stroke. */
     onstrokeend: () => void;
+    /** Called with the Cell the look tool is clicked or tapped on. */
+    oninspect: (cell: CellPosition) => void;
+    /** The inspected Organism's Cell, ringed, and whether it has died. */
+    inspected: { x: number; y: number; dead: boolean } | null;
+    /** Where the inspected Cell is on screen, or `null` while it is out of view or nothing is inspected. */
+    anchor?: Rect | null;
   }
 
-  let { tool, onsupport, onrelease, onstroke, onstamp, onstrokeend }: Props = $props();
+  let { tool, onsupport, onrelease, onstroke, onstamp, onstrokeend, oninspect, inspected, anchor = $bindable(null) }: Props = $props();
 
   /** Wheel zoom per pixel of scroll. */
   const WHEEL_ZOOM = 0.002;
   /** Pixels per line or page of scroll, for wheels that report in those units. */
   const LINE_PX = 16;
+  /** Furthest a look press can move, in CSS pixels, and still count as a click that inspects. */
+  const CLICK_SLOP = 4;
 
   let canvas: HTMLCanvasElement;
   let renderer: Renderer | null = null;
@@ -36,6 +55,8 @@
   let pending: Frame | null = null;
   let dirty = false;
   let drag: { x: number; y: number } | null = null;
+  /** Where the look tool was pressed, until the press moves too far to be a click. */
+  let pressedAt: { x: number; y: number } | null = null;
   /** Where the paint or erase tool last was during a press, in Cell coordinates. */
   let brushAt: Point | null = null;
   let editing = false;
@@ -74,7 +95,14 @@
     if (!world || viewport.width === 0 || viewport.height === 0) return;
     camera ??= openingCamera(world, viewport);
     renderer.draw({ camera, viewport, pixelRatio: window.devicePixelRatio || 1 });
+    anchor = inspected ? cellToScreen(camera, world, viewport, inspected) : null;
   }
+
+  /** Redraws whenever the inspected Cell changes, so the ring and anchor follow it. */
+  $effect(() => {
+    void inspected;
+    dirty = true;
+  });
 
   /** The fractional Cell coordinates under a pointer, or `null` before the first frame. */
   function cellAt(event: PointerEvent): Point | null {
@@ -88,6 +116,7 @@
     canvas.setPointerCapture(event.pointerId);
     if (tool === 'look') {
       drag = { x: event.clientX, y: event.clientY };
+      pressedAt = drag;
       grabbing = true;
       return;
     }
@@ -112,13 +141,23 @@
       return;
     }
     if (!drag || !camera || !world) return;
+    if (pressedAt && Math.hypot(event.clientX - pressedAt.x, event.clientY - pressedAt.y) > CLICK_SLOP) pressedAt = null;
     camera = panBy(camera, world, event.clientX - drag.x, event.clientY - drag.y);
     drag = { x: event.clientX, y: event.clientY };
     dirty = true;
   }
 
+  function onpointerup(event: PointerEvent): void {
+    if (pressedAt) {
+      const at = cellAt(event);
+      if (at) oninspect([Math.floor(at.x), Math.floor(at.y)]);
+    }
+    endDrag();
+  }
+
   function endDrag(): void {
     drag = null;
+    pressedAt = null;
     grabbing = false;
     brushAt = null;
     if (editing) {
@@ -169,9 +208,21 @@
   aria-label="The World"
   {onpointerdown}
   {onpointermove}
-  onpointerup={endDrag}
+  {onpointerup}
   onpointercancel={endDrag}
 ></canvas>
+{#if anchor}
+  {@const pad = Math.max(3, Math.round(anchor.width * 0.3))}
+  <div
+    class="ring"
+    class:dead={inspected?.dead}
+    style:left="{anchor.x - pad}px"
+    style:top="{anchor.y - pad}px"
+    style:width="{anchor.width + pad * 2}px"
+    style:height="{anchor.height + pad * 2}px"
+    style:border-radius="{anchor.width * 0.34 + pad}px"
+  ></div>
+{/if}
 
 <style>
   canvas {
@@ -190,5 +241,18 @@
 
   canvas.editing {
     cursor: crosshair;
+  }
+
+  .ring {
+    position: absolute;
+    pointer-events: none;
+    border: 2px solid #fff;
+    box-shadow:
+      0 0 0 1px rgb(0 0 0 / 60%),
+      inset 0 0 0 1px rgb(0 0 0 / 60%);
+  }
+
+  .ring.dead {
+    border-color: rgb(255 255 255 / 45%);
   }
 </style>
