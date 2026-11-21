@@ -1,4 +1,16 @@
-import type { AlleleStatus, Command, Genotype, InspectedAllele, Inspection, Rate, SoupSettings, WorkerEvent } from '../protocol.ts';
+import type {
+  AlleleStatus,
+  Command,
+  Genotype,
+  InspectedAllele,
+  Inspection,
+  Pedigree,
+  PedigreeOrigin,
+  PedigreeParent,
+  Rate,
+  SoupSettings,
+  WorkerEvent,
+} from '../protocol.ts';
 
 /** The World as the engine drives it; in the worker, the WASM `WebWorld`. */
 export interface EngineWorld {
@@ -26,6 +38,10 @@ export interface EngineWorld {
   /** The followed Organism's inspection, packed as the WASM `WebWorld` documents, if any. */
   inspection(): Float64Array | undefined;
   stopInspecting(): void;
+  /** The followed Organism's Pedigree `depth` Births back, packed as the WASM `WebWorld` documents, if any. */
+  pedigree(depth: number): Float64Array | undefined;
+  /** Sets the memory budget of Recorded History in bytes; throws the core's explanation if it is too large. */
+  setPedigreeBudget(bytes: number): void;
   free(): void;
 }
 
@@ -70,6 +86,8 @@ export class Engine {
   /** When the current pace began, and how many Generations have run since. */
   private paceStart = 0;
   private paceDone = 0;
+  /** The memory budget of Recorded History each World gets, or `null` for the core's default. */
+  private pedigreeBudget: number | null = null;
 
   constructor(options: EngineOptions) {
     this.options = options;
@@ -136,6 +154,13 @@ export class Engine {
       case 'stop-inspecting':
         this.change((world) => world.stopInspecting());
         break;
+      case 'pedigree':
+        this.sendPedigree(command.depth);
+        break;
+      case 'set-pedigree-budget':
+        this.pedigreeBudget = command.bytes;
+        this.report(() => this.world?.setPedigreeBudget(command.bytes));
+        break;
       case 'release':
         if (command.phenotypes.length === this.cells) {
           this.free.push(command.phenotypes);
@@ -157,6 +182,7 @@ export class Engine {
       world = this.options.createWorld(soup);
       world.setRule(soup.rule);
       world.setMutation(soup.mutation.rate, soup.mutation.magnitude);
+      if (this.pedigreeBudget !== null) world.setPedigreeBudget(this.pedigreeBudget);
     } catch (error) {
       world?.free();
       this.options.send({ type: 'error', message: messageOf(error) }, []);
@@ -196,6 +222,28 @@ export class Engine {
       this.options.send({ type: 'error', message: messageOf(error) }, []);
     }
     this.publish();
+  }
+
+  /** Runs `apply`, reporting a change the core refuses. */
+  private report(apply: () => void): void {
+    try {
+      apply();
+    } catch (error) {
+      this.options.send({ type: 'error', message: messageOf(error) }, []);
+    }
+  }
+
+  private sendPedigree(depth: number): void {
+    const world = this.world;
+    if (!world) return;
+    let pedigree: Pedigree | null;
+    try {
+      pedigree = unpackPedigree(world.pedigree(depth));
+    } catch (error) {
+      this.options.send({ type: 'error', message: messageOf(error) }, []);
+      return;
+    }
+    this.options.send({ type: 'pedigree', pedigree, depth }, []);
   }
 
   private pause(): void {
@@ -314,6 +362,29 @@ function unpackInspection(packed: Float64Array | undefined): Inspection | null {
   };
   const alleles = [allele(), allele()] as const;
   return { x, y, birthGeneration, deathGeneration: deathGeneration < 0 ? null : deathGeneration, phenotype, alleles };
+}
+
+/** Pedigree origins by the number the World packs them as. */
+const ORIGINS: readonly PedigreeOrigin[] = ['born', 'placed', 'beyond', 'unexplored'];
+
+/** A Pedigree as the World packs it, unpacked; throws if it does not follow the packed layout. */
+function unpackPedigree(packed: Float64Array | undefined): Pedigree | null {
+  if (!packed) return null;
+  let at = 0;
+  const next = (): number => {
+    const value = packed[at++];
+    if (value === undefined) throw new Error(`a packed pedigree ends after ${packed.length} numbers`);
+    return value;
+  };
+  const organisms: Pedigree['organisms'] = [];
+  while (at < packed.length) {
+    const [x, y, birthGeneration, depth, origin, fromAllelePool, parentCount] = [next(), next(), next(), next(), next(), next(), next()];
+    const parents = Array.from({ length: parentCount }, (): PedigreeParent => ({ organism: next(), allele: next() === 1 ? 1 : 0 }));
+    const named = ORIGINS[origin];
+    if (!named) throw new Error(`${origin} is not a packed Pedigree origin`);
+    organisms.push({ x, y, birthGeneration: birthGeneration < 0 ? null : birthGeneration, depth, origin: named, parents, fromAllelePool });
+  }
+  return { organisms };
 }
 
 function status(packed: number): AlleleStatus {

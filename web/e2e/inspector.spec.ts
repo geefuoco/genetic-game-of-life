@@ -75,3 +75,54 @@ test('clicking a dead Cell inspects nothing, and clicking outside the World clos
   await page.mouse.click(60, 450);
   await expect(inspector).toBeHidden();
 });
+
+test("a painted Organism's Pedigree shows it has no Parents", async ({ page }) => {
+  await openPaused(page);
+  await paintLoneCarrier(page);
+  const painted = (await stats(page)).generation;
+  const cell = centreOf(80, 80);
+  await page.mouse.click(cell.x, cell.y);
+  const ancestors = page.getByRole('region', { name: 'Red cell' }).getByRole('region', { name: 'Ancestors' });
+  await expect(ancestors.getByRole('img', { name: `Painted or seeded at gen ${painted.toLocaleString()}, no parents` })).toBeVisible();
+  await expect(ancestors.getByRole('button', { name: 'Show more ancestors' })).toHaveCount(0);
+});
+
+/** Clears rows 70 to 90 around the middle, then paints a row of three Carriers at (79..81, 80), a blinker. */
+async function paintBlinker(page: Page): Promise<void> {
+  const tools = page.getByRole('group', { name: 'Tools' });
+  await tools.getByRole('button', { name: 'Erase' }).click();
+  for (let y = 70; y <= 90; y++) await dragRow(page, y, 66, 94);
+  await tools.getByRole('button', { name: 'Carrier brush' }).click();
+  await dragRow(page, 80, 79, 81);
+  await tools.getByRole('button', { name: 'Look' }).click();
+}
+
+async function step(page: Page, count: number): Promise<void> {
+  for (let i = 0; i < count; i++) {
+    const before = (await stats(page)).generation;
+    await page.getByRole('button', { name: 'Step one generation' }).click();
+    await expect.poll(async () => (await stats(page)).generation).toBe(before + 1);
+  }
+}
+
+test("a Born Organism's Pedigree shows its Parents, and older ancestors on request", async ({ page }) => {
+  await openPaused(page);
+  await paintBlinker(page);
+  const painted = (await stats(page)).generation;
+  await step(page, 1);
+
+  const top = centreOf(80, 79);
+  await page.mouse.click(top.x, top.y);
+  const ancestors = page.getByRole('region', { name: /cell$/ }).getByRole('region', { name: 'Ancestors' });
+  await expect(ancestors.getByRole('img', { name: `Born at gen ${(painted + 1).toLocaleString()} from 2 parents` })).toBeVisible();
+  const parents = ancestors.getByRole('group', { name: 'Parents' });
+  await expect(parents.getByRole('img', { name: `Painted or seeded at gen ${painted.toLocaleString()}, no parents` })).toHaveCount(2);
+
+  await step(page, 6);
+  await page.mouse.click(top.x, top.y);
+  await expect(ancestors.getByRole('img', { name: `Born at gen ${(painted + 7).toLocaleString()} from 2 parents` })).toBeVisible();
+  await expect(ancestors.getByRole('group', { name: 'Great-grandparents' })).toBeVisible();
+  await expect(ancestors.getByRole('group', { name: 'Great-great-grandparents' })).toHaveCount(0);
+  await ancestors.getByRole('button', { name: 'Show more ancestors' }).click();
+  await expect(ancestors.getByRole('group', { name: 'Great-great-grandparents' })).toBeVisible();
+});

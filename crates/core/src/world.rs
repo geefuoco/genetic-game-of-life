@@ -6,6 +6,7 @@ use crate::genetics::{
 use crate::inspection::{InspectedOrganism, Inspection};
 use crate::mutation::MutationSettings;
 use crate::pattern::Pattern;
+use crate::pedigree::{birth_code, Lineage, Pedigree, RecordedHistory, MAX_PEDIGREE_BUDGET};
 use crate::rng::Rng;
 use crate::rule::Rule;
 use crate::snapshot::{self, invalid, Reader, SnapshotError, Writer};
@@ -38,6 +39,8 @@ pub enum WorldError {
     UnknownAllele(usize),
     /// A Pattern is wider or taller than the World it is stamped into.
     PatternTooLarge(Pattern),
+    /// A Pedigree memory budget, in bytes, is above [`MAX_PEDIGREE_BUDGET`].
+    PedigreeBudgetTooLarge(usize),
 }
 
 impl fmt::Display for WorldError {
@@ -69,6 +72,10 @@ impl fmt::Display for WorldError {
                     pattern.name()
                 )
             }
+            Self::PedigreeBudgetTooLarge(bytes) => write!(
+                f,
+                "pedigree memory budget {bytes} bytes is above the maximum of {MAX_PEDIGREE_BUDGET}"
+            ),
         }
     }
 }
@@ -78,9 +85,10 @@ impl std::error::Error for WorldError {}
 /// A fixed-size torus of Cells running a Rule, Conway's Life (B3/S23) by default.
 ///
 /// Cells are processed in row-major order. The seeded PRNG is part of the
-/// World's state. The edit history and the inspected Organism are not, so
-/// Worlds that differ only in what can be undone or redone, or in what is
-/// being inspected, are equal.
+/// World's state. The edit history, the inspected Organism and Recorded
+/// History are not, so Worlds that differ only in what can be undone or
+/// redone, in what is being inspected, or in the Pedigrees they keep, are
+/// equal.
 #[derive(Debug, Clone)]
 pub struct World {
     width: usize,
@@ -98,6 +106,7 @@ pub struct World {
     rng: Rng,
     edits: EditHistory,
     inspected: Option<InspectedOrganism>,
+    history: RecordedHistory,
 }
 
 impl PartialEq for World {
@@ -115,6 +124,7 @@ impl PartialEq for World {
             rng,
             edits: _,
             inspected: _,
+            history: _,
         } = self;
         *width == other.width
             && *height == other.height
@@ -252,6 +262,7 @@ impl World {
             rng,
             edits: EditHistory::default(),
             inspected: None,
+            history: RecordedHistory::new(0, true),
         }
     }
 
@@ -355,6 +366,7 @@ impl World {
             rng,
             edits: EditHistory::default(),
             inspected: None,
+            history: RecordedHistory::new(generation, false),
         })
     }
 
@@ -378,6 +390,7 @@ impl World {
     /// Each Mutation draw decides whether the Allele mutates; a mutant then
     /// draws its hue shift and then its Dominance Level.
     pub fn step(&mut self) {
+        self.history.end_generation(&self.placed_cells());
         let cells = std::mem::take(&mut self.cells);
         let pool = AllelePool::new(&cells, self.tree.founding().to_vec());
         let mut next = vec![None; cells.len()];
@@ -391,10 +404,15 @@ impl World {
                     next[index] = Some(match current {
                         Some(genotype) => genotype,
                         None => {
-                            let parents: Vec<Genotype> =
-                                neighbours.iter().filter_map(|&i| cells[i]).collect();
+                            let parents: Vec<(usize, Genotype)> = neighbours
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(direction, &i)| cells[i].map(|g| (direction, g)))
+                                .collect();
                             self.born[index] = self.generation + 1;
-                            self.birth(&parents, &pool)
+                            let (genotype, code) = self.birth(&parents, &pool);
+                            self.history.record_birth(index, code);
+                            genotype
                         }
                     });
                 }
@@ -406,15 +424,24 @@ impl World {
         self.tree
             .prune(self.cells.iter().flatten().flatten().copied());
         self.edits.clear();
+        self.history.keep_within_budget();
         self.follow_inspected(false);
     }
 
-    fn birth(&mut self, parents: &[Genotype], pool: &AllelePool) -> Genotype {
-        let [first, second] = match parents {
-            [] => [pool.draw(&mut self.rng), pool.draw(&mut self.rng)],
-            [only] => {
-                let from_parent = only[pick(&mut self.rng, 2)];
-                [from_parent, pool.draw(&mut self.rng)]
+    /// The Genotype of a Birth from the live Neighbours `parents`, each with
+    /// its Neighbour direction, and the Birth's Pedigree code.
+    fn birth(&mut self, parents: &[(usize, Genotype)], pool: &AllelePool) -> (Genotype, u8) {
+        let ([first, second], code) = match parents {
+            [] => (
+                [pool.draw(&mut self.rng), pool.draw(&mut self.rng)],
+                birth_code(&[]),
+            ),
+            [(direction, only)] => {
+                let allele = pick(&mut self.rng, 2);
+                (
+                    [only[allele], pool.draw(&mut self.rng)],
+                    birth_code(&[(*direction, allele)]),
+                )
             }
             _ => {
                 let first = pick(&mut self.rng, parents.len());
@@ -422,12 +449,34 @@ impl World {
                 if second >= first {
                     second += 1;
                 }
-                let from_first = parents[first][pick(&mut self.rng, 2)];
-                let from_second = parents[second][pick(&mut self.rng, 2)];
-                [from_first, from_second]
+                let first_allele = pick(&mut self.rng, 2);
+                let second_allele = pick(&mut self.rng, 2);
+                let ((first_direction, first), (second_direction, second)) =
+                    (parents[first], parents[second]);
+                (
+                    [first[first_allele], second[second_allele]],
+                    birth_code(&[
+                        (first_direction, first_allele),
+                        (second_direction, second_allele),
+                    ]),
+                )
             }
         };
-        [self.pass_on(first), self.pass_on(second)]
+        ([self.pass_on(first), self.pass_on(second)], code)
+    }
+
+    /// The live Cells, in row-major order, whose Organisms were placed in
+    /// the current Generation: painted or stamped in it, or, in the World a
+    /// run starts as, all of them.
+    fn placed_cells(&self) -> Vec<usize> {
+        if self.history.seeded() {
+            return (0..self.cells.len())
+                .filter(|&index| self.cells[index].is_some())
+                .collect();
+        }
+        let mut edited = self.edits.edited_cells();
+        edited.retain(|&index| self.cells[index].is_some());
+        edited
     }
 
     /// The Allele in `slot` as it reaches the child: unchanged, or with
@@ -694,9 +743,16 @@ impl World {
     /// returns its inspection; `None`, following nothing, if the Cell is dead.
     pub fn inspect(&mut self, x: usize, y: usize) -> Result<Option<Inspection>, WorldError> {
         let index = self.index_of(x, y)?;
+        let born = self.born[index];
+        let placed = if born == self.generation {
+            self.placed_cells().binary_search(&index).is_ok()
+        } else {
+            self.history.was_placed(born, index)
+        };
         self.inspected = self.cells[index].map(|genotype| InspectedOrganism {
             index,
-            birth_generation: self.born[index],
+            birth_generation: born,
+            placed,
             lineages: genotype.map(|slot| {
                 self.lineage(self.tree.id(slot))
                     .expect("a live Cell's Alleles are retained")
@@ -738,6 +794,47 @@ impl World {
         Some(organism.inspection(self.width, |id| {
             self.tree.slot(id).map(|slot| tally[slot.index()].status())
         }))
+    }
+
+    /// The Pedigree of the Organism being followed, if any, to `depth`
+    /// Births back: depth 1 holds its Parents, 2 their Parents.
+    pub fn pedigree(&self, depth: usize) -> Option<Pedigree> {
+        let organism = self.inspected.as_ref()?;
+        let live_since = |index: usize| self.cells[index].map(|_| self.born[index]);
+        let lineage = Lineage {
+            history: &self.history,
+            width: self.width,
+            height: self.height,
+            live_since: &live_since,
+        };
+        Some(lineage.pedigree(
+            organism.index,
+            organism.birth_generation,
+            organism.placed,
+            depth,
+        ))
+    }
+
+    /// Most bytes Recorded History may take; [`MAX_PEDIGREE_BUDGET`] unless
+    /// changed. Not part of a Snapshot.
+    pub fn pedigree_budget(&self) -> usize {
+        self.history.budget()
+    }
+
+    /// Changes the memory budget of Recorded History, at once dropping the
+    /// oldest records that no longer fit; a budget above
+    /// [`MAX_PEDIGREE_BUDGET`] is refused.
+    pub fn set_pedigree_budget(&mut self, bytes: usize) -> Result<(), WorldError> {
+        if bytes > MAX_PEDIGREE_BUDGET {
+            return Err(WorldError::PedigreeBudgetTooLarge(bytes));
+        }
+        self.history.set_budget(bytes);
+        Ok(())
+    }
+
+    /// Bytes Recorded History takes, at most [`World::pedigree_budget`].
+    pub fn pedigree_bytes(&self) -> usize {
+        self.history.bytes()
     }
 
     /// One Phenotype hue per Cell in row-major order; dead Cells are

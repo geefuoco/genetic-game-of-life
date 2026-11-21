@@ -40,6 +40,9 @@ pub(crate) struct InspectedOrganism {
     /// Row-major index of its Cell.
     pub(crate) index: usize,
     pub(crate) birth_generation: u64,
+    /// Whether it was painted, stamped or live in the World it started as,
+    /// rather than Born.
+    pub(crate) placed: bool,
     /// Each Allele's lineage, starting with the Allele, as it stood when
     /// inspection began; Alleles never change their source or origin, only
     /// their status.

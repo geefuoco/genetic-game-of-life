@@ -2,7 +2,8 @@
 //! steps and reads Phenotypes from.
 
 use genetic_life_core::{
-    Allele, AlleleStatus, Inspection, MutationSettings, Pattern, Rule, Soup, World,
+    Allele, AlleleStatus, Inspection, MutationSettings, Origin, Pattern, Pedigree, Rule, Soup,
+    World,
 };
 use std::fmt::Display;
 use wasm_bindgen::prelude::*;
@@ -127,6 +128,24 @@ impl WebWorld {
         self.world.inspection().as_ref().map(packed_inspection)
     }
 
+    /// The Pedigree of the Organism being followed, if any, to `depth` Births
+    /// back, packed as, per Organism with the followed one first, `[x, y,
+    /// Birth Generation or -1 when unknown, depth, origin, Alleles from the
+    /// Allele Pool, Parent count]` and then `[Parent's Organism index, Allele
+    /// it passed on]` per Parent, with origin 0 Born, 1 painted, stamped or
+    /// live in the starting World, 2 beyond Recorded History and 3 Born but
+    /// at `depth`, so its Parents were not queried.
+    pub fn pedigree(&self, depth: usize) -> Option<Vec<f64>> {
+        self.world.pedigree(depth).as_ref().map(packed_pedigree)
+    }
+
+    /// Changes the memory budget of Recorded History, in bytes; fails above
+    /// the core's maximum.
+    #[wasm_bindgen(js_name = setPedigreeBudget)]
+    pub fn set_pedigree_budget(&mut self, bytes: usize) -> Result<(), JsError> {
+        self.world.set_pedigree_budget(bytes).map_err(js_error)
+    }
+
     /// Stops following an Organism for its inspector.
     #[wasm_bindgen(js_name = stopInspecting)]
     pub fn stop_inspecting(&mut self) {
@@ -190,6 +209,35 @@ fn packed_inspection(inspection: &Inspection) -> Vec<f64> {
                 node.origin as f64,
                 status,
             ]);
+        }
+    }
+    packed
+}
+
+/// `pedigree` laid out as `WebWorld::pedigree` documents.
+fn packed_pedigree(pedigree: &Pedigree) -> Vec<f64> {
+    let mut packed = Vec::new();
+    for organism in &pedigree.organisms {
+        let (origin, from_allele_pool, parents) = match &organism.origin {
+            Origin::Born {
+                parents,
+                from_allele_pool,
+            } => (0.0, *from_allele_pool, &parents[..]),
+            Origin::Placed => (1.0, 0, &[][..]),
+            Origin::BeyondRecordedHistory => (2.0, 0, &[][..]),
+            Origin::Unexplored => (3.0, 0, &[][..]),
+        };
+        packed.extend([
+            organism.x as f64,
+            organism.y as f64,
+            organism.birth_generation.map_or(-1.0, |born| born as f64),
+            organism.depth as f64,
+            origin,
+            from_allele_pool as f64,
+            parents.len() as f64,
+        ]);
+        for parent in parents {
+            packed.extend([parent.organism as f64, parent.allele as f64]);
         }
     }
     packed

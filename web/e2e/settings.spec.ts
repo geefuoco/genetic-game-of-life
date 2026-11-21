@@ -164,3 +164,14 @@ test('the docked panel holds the same settings in their own section', async ({ p
   await expect(section.getByRole('slider', { name: 'Mutation', exact: true })).toBeVisible();
   await expect(section.getByRole('button', { name: 'Start new soup' })).toBeVisible();
 });
+
+test('the ancestry memory budget starts at 200 MB on a desktop and can be lowered', async ({ page }) => {
+  await openPaused(page);
+  const settings = await openSettings(page);
+  const budget = settings.getByRole('slider', { name: 'Ancestry memory' });
+  await expect(budget).toHaveAttribute('aria-valuetext', '200 MB');
+  await budget.focus();
+  await page.keyboard.press('Home');
+  await expect(budget).toHaveAttribute('aria-valuetext', '10 MB');
+  await expect(settings.getByText('10 MB')).toBeVisible();
+});

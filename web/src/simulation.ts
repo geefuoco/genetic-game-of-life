@@ -1,4 +1,4 @@
-import type { Command, Frame, WorkerEvent } from './protocol.ts';
+import type { Command, Frame, Pedigree, WorkerEvent } from './protocol.ts';
 
 export interface SimulationHandlers {
   frame(frame: Frame): void;
@@ -6,6 +6,8 @@ export interface SimulationHandlers {
   rule(rule: string): void;
   /** A Rule the core refused, with its explanation. */
   ruleRejected(rejected: { rule: string; message: string }): void;
+  /** The inspected Organism's Pedigree, `depth` Births back, or `null` if nothing is inspected. */
+  pedigree(pedigree: Pedigree | null, depth: number): void;
   error(message: string): void;
 }
 
@@ -26,6 +28,9 @@ export class Simulation {
           break;
         case 'rule-rejected':
           handlers.ruleRejected({ rule: message.rule, message: message.message });
+          break;
+        case 'pedigree':
+          handlers.pedigree(message.pedigree, message.depth);
           break;
         case 'error':
           handlers.error(message.message);

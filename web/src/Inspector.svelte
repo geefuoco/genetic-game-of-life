@@ -3,7 +3,8 @@
   import type { Rect, Size } from './lib/camera.ts';
   import { capitalised, colourName } from './lib/colours.ts';
   import { paletteCss } from './lib/palette.ts';
-  import type { InspectedAllele, Inspection, LineageAllele } from './protocol.ts';
+  import PedigreeGraph from './PedigreeGraph.svelte';
+  import type { InspectedAllele, Inspection, LineageAllele, Pedigree } from './protocol.ts';
 
   interface Props {
     inspection: Inspection;
@@ -11,10 +12,15 @@
     anchor: Rect | null;
     /** The stage the card is placed on. */
     stage: Size;
+    /** The inspected Organism's Pedigree, or `null` until it arrives. */
+    pedigree: Pedigree | null;
+    /** Whether more ancestors can be asked for. */
+    expandable: boolean;
+    onexpand: () => void;
     onclose: () => void;
   }
 
-  let { inspection, anchor, stage, onclose }: Props = $props();
+  let { inspection, anchor, stage, pedigree, expandable, onexpand, onclose }: Props = $props();
 
   /** Space between the card and its Cell, and between the card and the stage edges, in CSS pixels. */
   const GAP = 18;
@@ -147,6 +153,15 @@
         {/each}
       </ol>
     {/each}
+  </section>
+  <section class="ancestors" aria-labelledby="inspector-ancestors">
+    <h3 id="inspector-ancestors">Ancestors</h3>
+    {#if pedigree}
+      <PedigreeGraph {pedigree} />
+      {#if expandable}
+        <button type="button" class="more" onclick={onexpand}>Show more ancestors</button>
+      {/if}
+    {/if}
   </section>
   <p class="born">Born at generation {inspection.birthGeneration.toLocaleString()}</p>
 </section>
@@ -340,6 +355,27 @@
   .when {
     color: var(--muted);
     text-transform: none;
+  }
+
+  .ancestors {
+    display: grid;
+    gap: 6px;
+    margin-top: 12px;
+  }
+
+  .more {
+    justify-self: start;
+    height: 26px;
+    padding: 0 10px;
+    font-size: 11.5px;
+    color: #c3c8d4;
+    background: rgb(255 255 255 / 5%);
+    border-radius: 8px;
+  }
+
+  .more:hover {
+    color: #fff;
+    background: rgb(255 255 255 / 10%);
   }
 
   .born {

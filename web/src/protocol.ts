@@ -74,6 +74,40 @@ export interface Inspection {
   alleles: readonly [InspectedAllele, InspectedAllele];
 }
 
+/**
+ * How an Organism in a Pedigree came to be: Born from Parents, placed (painted, stamped or live in the World a run started
+ * as, so it has no Parents), beyond Recorded History, or Born but at the requested depth, so its Parents were not asked for.
+ */
+export type PedigreeOrigin = 'born' | 'placed' | 'beyond' | 'unexplored';
+
+/** A Parent in a Pedigree. */
+export interface PedigreeParent {
+  /** The Parent's index in {@link Pedigree.organisms}. */
+  organism: number;
+  /** Which of the Parent's two Alleles it passed on. */
+  allele: 0 | 1;
+}
+
+/** One Organism in a Pedigree. */
+export interface PedigreeOrganism {
+  x: number;
+  y: number;
+  /** Its Birth Generation, or `null` when it is beyond Recorded History and no longer live. */
+  birthGeneration: number | null;
+  /** The fewest Births between it and the inspected Organism: 0 for that Organism, 1 for its Parents. */
+  depth: number;
+  origin: PedigreeOrigin;
+  /** Its Parents, when it was Born and they were asked for. */
+  parents: PedigreeParent[];
+  /** How many of its Alleles a Birth drew from the Allele Pool rather than a Parent. */
+  fromAllelePool: number;
+}
+
+/** An inspected Organism's Pedigree: the Organism first, then its ancestors by depth, each shared ancestor once. */
+export interface Pedigree {
+  organisms: PedigreeOrganism[];
+}
+
 /** The Patterns the core's library can stamp, by the core's names. */
 export type PatternName = 'glider' | 'lwss' | 'r-pentomino' | 'gosper-gun';
 
@@ -101,6 +135,10 @@ export type Command =
   /** Follows the Organism at a Cell in the frames' inspection, or nothing if the Cell is dead. */
   | { type: 'inspect'; x: number; y: number }
   | { type: 'stop-inspecting' }
+  /** Asks for the inspected Organism's Pedigree, `depth` Births back. */
+  | { type: 'pedigree'; depth: number }
+  /** Sets the memory budget of Recorded History, kept for later Soups too. */
+  | { type: 'set-pedigree-budget'; bytes: number }
   | { type: 'release'; phenotypes: Float32Array };
 
 /** One drawable state of the World. */
@@ -123,6 +161,8 @@ export interface Frame {
 export type WorkerEvent =
   | Frame
   | { type: 'error'; message: string }
+  /** The inspected Organism's Pedigree after a `pedigree` command, or `null` if nothing is inspected. */
+  | { type: 'pedigree'; pedigree: Pedigree | null; depth: number }
   /** The Rule now running, in canonical B/S notation, after a `set-rule`. */
   | { type: 'rule'; rule: string }
   /** A `set-rule` the core refused, with its explanation; the running Rule is unchanged. */
