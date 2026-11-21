@@ -1,13 +1,16 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
+  import Brush from './Brush.svelte';
   import Dock from './Dock.svelte';
   import Settings from './Settings.svelte';
   import WorldView from './WorldView.svelte';
+  import { DEFAULT_BRUSH, toolGenotype, type Brush as BrushSettings, type Tool } from './lib/brush.ts';
   import { browserStorage, loadDocked, saveDocked } from './lib/dock.ts';
   import { keyAction, type KeyAction } from './lib/keys.ts';
   import type { NewSoup, RuleStatus, SoupDraft } from './lib/settings.ts';
   import { DEFAULT_SPEED, SPEEDS, cycleSpeed, nudgeSpeed } from './lib/speed.ts';
-  import type { Frame, MutationSettings, SoupSettings } from './protocol.ts';
+  import { paletteCss } from './lib/palette.ts';
+  import type { CellPosition, Frame, MutationSettings, SoupSettings } from './protocol.ts';
   import { Simulation } from './simulation.ts';
 
   /** The Soup the page opens on, apart from its random Seed: Conway's Life with the core's default Mutation. */
@@ -32,6 +35,10 @@
   let hintShown = $state(true);
   let problem = $state<string | null>(null);
   let settingsOpen = $state(false);
+  let tool = $state<Tool>('look');
+  let brush = $state<BrushSettings>(structuredClone(DEFAULT_BRUSH));
+  let canUndo = $state(false);
+  let canRedo = $state(false);
   let rule = $state.raw<RuleStatus>({ running: OPENING_SOUP.rule, rejected: null });
   let mutation = $state.raw<MutationSettings>(OPENING_SOUP.mutation);
   let draft = $state<SoupDraft>({
@@ -48,11 +55,31 @@
   let simulation: Simulation | null = null;
 
   const stats = $derived(`gen ${generation.toLocaleString()} · ${population.toLocaleString()} alive`);
+  const brushColours = $derived([paletteCss(brush.first.hue), paletteCss(brush.second.hue)] as const);
 
   function onFrame(frame: Frame): void {
     generation = frame.generation;
     population = frame.population;
+    canUndo = frame.canUndo;
+    canRedo = frame.canRedo;
     view.present(frame);
+  }
+
+  function stroke(cells: CellPosition[]): void {
+    if (tool === 'erase') simulation?.send({ type: 'erase', cells });
+    else simulation?.send({ type: 'paint', cells, genotype: $state.snapshot(toolGenotype(tool, brush)) });
+  }
+
+  function stamp([x, y]: CellPosition): void {
+    simulation?.send({ type: 'stamp', pattern: brush.pattern, x, y, genotype: $state.snapshot(toolGenotype('stamp', brush)) });
+  }
+
+  function undo(): void {
+    simulation?.send({ type: 'undo' });
+  }
+
+  function redo(): void {
+    simulation?.send({ type: 'redo' });
   }
 
   function togglePlay(): void {
@@ -113,8 +140,22 @@
     return target instanceof Element && target.closest('input, textarea, select, [contenteditable]') !== null;
   }
 
+  /** Whether focus is in a text field, which handles its own undo and redo. */
+  function isTyping(target: EventTarget | null): boolean {
+    if (target instanceof HTMLInputElement) return !['range', 'checkbox', 'radio', 'button', 'submit', 'reset', 'color', 'file'].includes(target.type);
+    return target instanceof Element && target.closest('textarea, [contenteditable]') !== null;
+  }
+
   function actionOf(event: KeyboardEvent): KeyAction | null {
-    return keyAction({ key: event.key, ctrlKey: event.ctrlKey, metaKey: event.metaKey, altKey: event.altKey, editable: isEditable(event.target) });
+    return keyAction({
+      key: event.key,
+      ctrlKey: event.ctrlKey,
+      metaKey: event.metaKey,
+      altKey: event.altKey,
+      shiftKey: event.shiftKey,
+      editable: isEditable(event.target),
+      typing: isTyping(event.target),
+    });
   }
 
   function onkeydown(event: KeyboardEvent): void {
@@ -131,6 +172,8 @@
     else if (action === 'step') step();
     else if (action === 'slower') setSpeed(nudgeSpeed(speed, -1));
     else if (action === 'faster') setSpeed(nudgeSpeed(speed, 1));
+    else if (action === 'undo') undo();
+    else if (action === 'redo') redo();
     else void toggleDock(false);
   }
 
@@ -177,6 +220,13 @@
     speed={SPEEDS[speed]!.label}
     {docked}
     {settingsOpen}
+    {tool}
+    {brushColours}
+    {canUndo}
+    {canRedo}
+    ontool={(next) => (tool = next)}
+    onundo={undo}
+    onredo={redo}
     ontoggleplay={togglePlay}
     onstep={step}
     onfaster={() => setSpeed(cycleSpeed(speed, 1))}
@@ -190,6 +240,7 @@
 
 {#snippet settings()}
   <Settings {rule} {mutation} bind:draft onrule={setRule} onmutation={setMutation} onnewsoup={newSoup} {randomSeed} />
+  <Brush bind:brush />
 {/snippet}
 
 {#if problem}
@@ -198,7 +249,15 @@
 
 <div class="app" class:docked hidden={problem !== null}>
   <main class="stage">
-    <WorldView bind:this={view} onsupport={(ok) => (supported = ok)} onrelease={(phenotypes) => simulation?.send({ type: 'release', phenotypes })} />
+    <WorldView
+      bind:this={view}
+      {tool}
+      onsupport={(ok) => (supported = ok)}
+      onrelease={(phenotypes) => simulation?.send({ type: 'release', phenotypes })}
+      onstroke={stroke}
+      onstamp={stamp}
+      onstrokeend={() => simulation?.send({ type: 'end-stroke' })}
+    />
     <div class="vignette"></div>
     <header class="wordmark" aria-hidden={docked}>
       <h1>genetic life</h1>
@@ -304,6 +363,8 @@
     position: absolute;
     bottom: 32px;
     left: 50%;
+    width: max-content;
+    max-width: calc(100% - 32px);
     transform: translateX(-50%);
   }
 

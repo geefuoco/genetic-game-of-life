@@ -173,11 +173,25 @@ test('Space plays or pauses even while a dock button has focus', async ({ page }
 test('every control is reachable with Tab and labelled', async ({ page }) => {
   await open(page);
   const reached: string[] = [];
-  for (let i = 0; i < 7; i++) {
+  const expected = [
+    'Pause',
+    'Step one generation',
+    'Speed 1×',
+    'Look',
+    'Paint',
+    'Carrier brush',
+    'Erase',
+    'Stamp a pattern',
+    'Zoom out',
+    'Zoom in',
+    'Settings',
+    'Dock the controls to the side',
+  ];
+  for (let i = 0; i < expected.length; i++) {
     await page.keyboard.press('Tab');
     reached.push(await page.evaluate(() => document.activeElement?.getAttribute('aria-label') ?? ''));
   }
-  expect(reached).toEqual(['Pause', 'Step one generation', 'Speed 1×', 'Zoom out', 'Zoom in', 'Settings', 'Dock the controls to the side']);
+  expect(reached).toEqual(expected);
 });
 
 test('panning by a whole World width wraps round to the same view', async ({ page }) => {

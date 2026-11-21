@@ -72,6 +72,18 @@ export function paletteColour(hue: number): Oklch {
   return { l, c, h: hue };
 }
 
+/** The palette's colour for a Phenotype hue as 8-bit sRGB channels. */
+function paletteRgb8(hue: number): [number, number, number] {
+  const [r, g, b] = oklchToSrgb(paletteColour(hue)).map((v) => Math.round(Math.min(1, Math.max(0, v)) * 255));
+  return [r ?? 0, g ?? 0, b ?? 0];
+}
+
+/** The palette's colour for a Phenotype hue as a CSS colour, for controls that show a hue. */
+export function paletteCss(hue: number): string {
+  const [r, g, b] = paletteRgb8(hue);
+  return `rgb(${r} ${g} ${b})`;
+}
+
 /**
  * The palette sampled at `size` evenly spaced hues from 0°, as RGBA8 texels
  * for the renderer's colour lookup.
@@ -79,11 +91,7 @@ export function paletteColour(hue: number): Oklch {
 export function paletteTable(size: number): Uint8Array {
   const table = new Uint8Array(size * 4);
   for (let i = 0; i < size; i++) {
-    const rgb = oklchToSrgb(paletteColour((i * 360) / size));
-    rgb.forEach((v, channel) => {
-      table[i * 4 + channel] = Math.round(Math.min(1, Math.max(0, v)) * 255);
-    });
-    table[i * 4 + 3] = 255;
+    table.set([...paletteRgb8((i * 360) / size), 255], i * 4);
   }
   return table;
 }

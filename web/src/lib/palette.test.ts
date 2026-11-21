@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { maxChroma, oklchToSrgb, paletteColour } from './palette.ts';
+import { maxChroma, oklchToSrgb, paletteColour, paletteCss, paletteTable } from './palette.ts';
 
 const SRGB_RED = { l: 0.62796, c: 0.25768, h: 29.2339 };
 
@@ -56,6 +56,16 @@ describe('Natural lightness palette', () => {
         expect(v).toBeGreaterThanOrEqual(0);
         expect(v).toBeLessThanOrEqual(1);
       }
+    }
+  });
+});
+
+describe('palette CSS colours', () => {
+  it('match the colours the renderer draws', () => {
+    const table = paletteTable(360);
+    for (const hue of [0, 45, 105, 200, 300]) {
+      const [r, g, b] = table.slice(hue * 4, hue * 4 + 3);
+      expect(paletteCss(hue)).toBe(`rgb(${r} ${g} ${b})`);
     }
   });
 });

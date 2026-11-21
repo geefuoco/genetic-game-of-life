@@ -92,6 +92,14 @@ function harness(options: { keepUp?: boolean } = {}): Harness {
       phenotypes: (out) => world.phenotypes(out),
       setRule: (rule) => world.setRule(rule),
       setMutation: (rate, magnitude) => world.setMutation(rate, magnitude),
+      paint: (x, y, genotype) => world.paint(x, y, genotype),
+      erase: (x, y) => world.erase(x, y),
+      stamp: (pattern, x, y, genotype) => world.stamp(pattern, x, y, genotype),
+      endStroke: () => world.endStroke(),
+      undo: () => world.undo(),
+      redo: () => world.redo(),
+      canUndo: () => world.canUndo(),
+      canRedo: () => world.canRedo(),
       free: () => world.free(),
     };
   };
@@ -363,5 +371,86 @@ describe('Mutation', () => {
     h.clock.advance(1000);
     expect(h.latest().generation).toBe(30);
     expect(distinctLiveHues(h.latest())).toBeGreaterThan(WITHOUT_MUTATION);
+  });
+});
+
+describe('editing', () => {
+  const EMPTY: SoupSettings = { ...SOUP, width: 32, height: 32, density: 0 };
+  const ORANGE = { hue: 40, dominance: 2 };
+  const BLUE = { hue: 230, dominance: 0 };
+  const hueAt = (frame: Frame, x: number, y: number): number => frame.phenotypes[y * frame.width + x] ?? Number.NaN;
+
+  it('paints Cells with a Genotype and sends a frame showing them', () => {
+    const h = harness();
+    start(h, 15, false, EMPTY);
+    h.send({ type: 'paint', cells: [[3, 4], [4, 4]], genotype: [ORANGE, BLUE] });
+    const frame = h.latest();
+    expect(frame.generation).toBe(0);
+    expect(frame.population).toBe(2);
+    expect(hueAt(frame, 3, 4)).toBe(40);
+    expect(hueAt(frame, 4, 4)).toBe(40);
+    expect(frame.canUndo).toBe(true);
+  });
+
+  it('erases Cells', () => {
+    const h = harness();
+    start(h, 15, false, EMPTY);
+    h.send({ type: 'paint', cells: [[3, 4], [4, 4]], genotype: [ORANGE, ORANGE] });
+    h.send({ type: 'erase', cells: [[3, 4]] });
+    h.clock.advance(0);
+    expect(h.latest().population).toBe(1);
+    expect(hueAt(h.latest(), 3, 4)).toBeLessThan(0);
+  });
+
+  it('stamps a Pattern centred on a Cell', () => {
+    const h = harness();
+    start(h, 15, false, EMPTY);
+    h.send({ type: 'stamp', pattern: 'glider', x: 10, y: 10, genotype: [ORANGE, ORANGE] });
+    expect(h.latest().population).toBe(5);
+    expect(hueAt(h.latest(), 11, 11)).toBe(40);
+  });
+
+  it('undoes and redoes whole strokes', () => {
+    const h = harness();
+    start(h, 15, false, EMPTY);
+    h.send({ type: 'paint', cells: [[1, 1]], genotype: [ORANGE, ORANGE] });
+    h.send({ type: 'paint', cells: [[2, 1]], genotype: [ORANGE, ORANGE] });
+    h.send({ type: 'end-stroke' });
+    h.send({ type: 'undo' });
+    h.clock.advance(0);
+    expect(h.latest()).toMatchObject({ population: 0, canUndo: false, canRedo: true });
+    h.send({ type: 'redo' });
+    h.clock.advance(0);
+    expect(h.latest()).toMatchObject({ population: 2, canUndo: true, canRedo: false });
+  });
+
+  it('forgets the edit history once a Generation advances', () => {
+    const h = harness();
+    start(h, 15, false, EMPTY);
+    h.send({ type: 'paint', cells: [[1, 1]], genotype: [ORANGE, ORANGE] });
+    h.send({ type: 'end-stroke' });
+    h.send({ type: 'step' });
+    h.clock.advance(0);
+    expect(h.latest()).toMatchObject({ generation: 1, canUndo: false, canRedo: false });
+  });
+
+  it('applies edits while running without disturbing the pace', () => {
+    const h = harness();
+    start(h, 15, true, EMPTY);
+    h.clock.advance(500);
+    const generation = h.latest().generation;
+    h.send({ type: 'stamp', pattern: 'r-pentomino', x: 16, y: 16, genotype: [ORANGE, ORANGE] });
+    h.clock.advance(0);
+    expect(h.latest()).toMatchObject({ generation, population: 5 });
+    h.clock.advance(1500);
+    expect(h.latest().generation).toBe(30);
+    expect(h.latest().population).toBeGreaterThan(0);
+  });
+
+  it('reports an edit the core refuses as an error', () => {
+    const h = harness();
+    start(h, 15, false, EMPTY);
+    h.send({ type: 'paint', cells: [[40, 0]], genotype: [ORANGE, ORANGE] });
+    expect(h.errors).toEqual(['cell (40, 0) is outside the world']);
   });
 });

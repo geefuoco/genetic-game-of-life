@@ -87,7 +87,7 @@ Every Allele carried by the live Cells, counted once per copy; a Birth with fewe
 _Avoid_: Gene pool, random allele
 
 **Founding Allele**:
-An Allele present at Generation 0, with no Allele it descends from.
+An Allele with no Allele it descends from: present at Generation 0, or brought in later by painting or stamping, originating in the Generation it was painted.
 _Avoid_: Root allele, original
 
 **Allele Tree**:
@@ -115,6 +115,10 @@ _Avoid_: Random fill, noise
 **Pattern**:
 A named, known arrangement of live Cells (e.g. glider, Gosper gun) that can be stamped into the World.
 _Avoid_: Shape, prefab, template
+
+**Stroke**:
+The edits made by one press and drag of an editing tool, which undo reverts and redo reapplies as a whole; the Strokes of a Generation can no longer be undone once the next Generation is applied.
+_Avoid_: Action, operation
 
 **Share Link**:
 Text encoding the Rule, settings and Seed of a Soup World, from which anyone can start the same run.

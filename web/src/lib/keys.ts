@@ -1,6 +1,6 @@
 /** Keyboard shortcuts for the dock's controls. */
 
-export type KeyAction = 'toggle-play' | 'step' | 'slower' | 'faster' | 'toggle-dock';
+export type KeyAction = 'toggle-play' | 'step' | 'slower' | 'faster' | 'toggle-dock' | 'undo' | 'redo';
 
 /** The parts of a key press that decide its action. */
 export interface KeyPress {
@@ -8,8 +8,11 @@ export interface KeyPress {
   ctrlKey: boolean;
   metaKey: boolean;
   altKey: boolean;
-  /** Whether focus is in an input, where keys type rather than act. */
+  shiftKey: boolean;
+  /** Whether focus is in a form control, where keys type or change it rather than act. */
   editable: boolean;
+  /** Whether focus is in a text field, which has its own undo and redo. */
+  typing: boolean;
 }
 
 const ACTIONS: Record<string, KeyAction> = {
@@ -23,6 +26,16 @@ const ACTIONS: Record<string, KeyAction> = {
 
 /** The action a key press triggers, if any. */
 export function keyAction(press: KeyPress): KeyAction | null {
-  if (press.editable || press.ctrlKey || press.metaKey || press.altKey) return null;
+  if (press.altKey) return null;
+  if (press.ctrlKey || press.metaKey) return press.typing ? null : commandAction(press);
+  if (press.editable) return null;
   return ACTIONS[press.key] ?? null;
+}
+
+/** Undo and redo, the only Ctrl or Cmd shortcuts the page takes over. */
+function commandAction(press: KeyPress): KeyAction | null {
+  const key = press.key.toLowerCase();
+  if (key === 'z') return press.shiftKey ? 'redo' : 'undo';
+  if (key === 'y' && press.ctrlKey) return 'redo';
+  return null;
 }
