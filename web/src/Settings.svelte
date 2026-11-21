@@ -124,7 +124,7 @@
     <output for="{id}-reach">{mutationMagnitudeLabel(mutation.magnitude)}</output>
   </label>
 
-  <label class="row" for="{id}-budget">
+  <label class="row budget" for="{id}-budget">
     <span>Ancestry memory</span>
     <input
       id="{id}-budget"
@@ -260,6 +260,10 @@
     grid-template-columns: 1fr 130px 44px;
     gap: 10px;
     align-items: center;
+  }
+
+  .row.budget {
+    grid-template-columns: 1fr 116px 58px;
   }
 
   .row.choice {
