@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { initSync, WebWorld } from '../../wasm-pkg/genetic_life_wasm.js';
-import type { Command, Frame, Rate, SoupSettings, WorkerEvent } from '../protocol.ts';
+import type { Census, Command, Frame, Rate, SoupSettings, WorkerEvent } from '../protocol.ts';
 import { RULE_PRESETS } from '../lib/settings.ts';
 import { Engine, type Clock, type EngineWorld } from './engine.ts';
 
@@ -105,6 +105,8 @@ function harness(options: { keepUp?: boolean } = {}): Harness {
       stopInspecting: () => world.stopInspecting(),
       pedigree: (depth) => world.pedigree(depth),
       setPedigreeBudget: (bytes) => world.setPedigreeBudget(bytes),
+      census: () => world.census(),
+      populationHistory: () => world.populationHistory(),
       free: () => world.free(),
     };
   };
@@ -516,5 +518,81 @@ describe('inspecting', () => {
     h.send({ type: 'inspect', x: 3, y: 4 });
     start(h, 15, false, EMPTY);
     expect(h.latest().inspection).toBeNull();
+  });
+});
+
+describe('census', () => {
+  const EMPTY: SoupSettings = { ...SOUP, width: 32, height: 32, density: 0, mutation: { rate: 0, magnitude: 0 } };
+  const ORANGE = { hue: 40, dominance: 2 };
+  const JADE = { hue: 160, dominance: 1 };
+  const censuses = (h: Harness): Census[] => h.notices.filter((notice): notice is Census => notice.type === 'census');
+  const latestCensus = (h: Harness): Census => {
+    const census = censuses(h).at(-1);
+    if (!census) throw new Error('no census yet');
+    return census;
+  };
+
+  it('is not sent until the page watches it', () => {
+    const h = harness();
+    start(h);
+    h.clock.advance(1000);
+    expect(censuses(h)).toEqual([]);
+  });
+
+  it('reports the Generation, Population, and how many Organisms show or hide each living Allele', () => {
+    const h = harness();
+    start(h, 15, false, EMPTY);
+    h.send({ type: 'step' });
+    h.send({ type: 'paint', cells: [[3, 4], [9, 9]], genotype: [JADE, ORANGE] });
+    h.send({ type: 'paint', cells: [[20, 20]], genotype: [JADE, JADE] });
+    h.send({ type: 'watch-census', watching: true });
+    expect(latestCensus(h)).toEqual({
+      type: 'census',
+      generation: 1,
+      population: 3,
+      alleles: [
+        { ...JADE, copies: 4, shown: 1, hidden: 2 },
+        { ...ORANGE, copies: 2, shown: 2, hidden: 0 },
+      ],
+      populationHistory: Uint32Array.of(0, 3),
+    });
+  });
+
+  it('follows the run at most four times a second, and always ends on the latest Generation', () => {
+    const h = harness();
+    h.cost.msPerGeneration = 1;
+    start(h, 'max', true);
+    h.send({ type: 'watch-census', watching: true });
+    h.clock.advance(1000);
+    h.send({ type: 'pause' });
+    h.clock.advance(1000);
+    const sent = censuses(h);
+    expect(sent.length).toBeGreaterThan(2);
+    expect(sent.length).toBeLessThanOrEqual(6);
+    const last = latestCensus(h);
+    expect(last.generation).toBe(h.latest().generation);
+    expect(last.population).toBe(h.latest().population);
+    expect(last.populationHistory).toHaveLength(last.generation + 1);
+    expect(last.populationHistory.at(-1)).toBe(last.population);
+  });
+
+  it('stops when the page stops watching', () => {
+    const h = harness();
+    start(h);
+    h.send({ type: 'watch-census', watching: true });
+    h.clock.advance(1000);
+    h.send({ type: 'watch-census', watching: false });
+    const count = censuses(h).length;
+    h.clock.advance(2000);
+    expect(censuses(h)).toHaveLength(count);
+  });
+
+  it('reports a new Soup straight away', () => {
+    const h = harness();
+    start(h, 15, false, EMPTY);
+    h.send({ type: 'watch-census', watching: true });
+    h.send({ type: 'paint', cells: [[1, 1]], genotype: [ORANGE, ORANGE] });
+    start(h, 15, false, { ...EMPTY, width: 16, height: 16 });
+    expect(latestCensus(h)).toMatchObject({ generation: 0, population: 0, alleles: [] });
   });
 });

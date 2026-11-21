@@ -4,6 +4,7 @@
   import Dock from './Dock.svelte';
   import Inspector from './Inspector.svelte';
   import Settings from './Settings.svelte';
+  import Stats from './Stats.svelte';
   import WorldView from './WorldView.svelte';
   import { DEFAULT_BRUSH, toolGenotype, type Brush as BrushSettings, type Tool } from './lib/brush.ts';
   import { browserStorage, loadDocked, saveDocked } from './lib/dock.ts';
@@ -13,7 +14,7 @@
   import { DEFAULT_SPEED, SPEEDS, cycleSpeed, nudgeSpeed } from './lib/speed.ts';
   import { paletteCss } from './lib/palette.ts';
   import type { Rect } from './lib/camera.ts';
-  import type { CellPosition, Frame, Inspection, MutationSettings, Pedigree, SoupSettings } from './protocol.ts';
+  import type { Census, CellPosition, Frame, Inspection, MutationSettings, Pedigree, SoupSettings } from './protocol.ts';
   import { Simulation } from './simulation.ts';
 
   /** The Soup the page opens on, apart from its random Seed: Conway's Life with the core's default Mutation. */
@@ -35,6 +36,8 @@
   let speed = $state(DEFAULT_SPEED);
   let generation = $state(0);
   let population = $state(0);
+  /** The latest census, while the side panel that shows it is open. */
+  let census = $state.raw<Census | null>(null);
   let hintShown = $state(true);
   let problem = $state<string | null>(null);
   let settingsOpen = $state(false);
@@ -185,10 +188,17 @@
   async function toggleDock(refocus: boolean): Promise<void> {
     docked = !docked;
     saveDocked(browserStorage(), docked);
+    watchCensus();
     if (refocus) {
       await tick();
       dock.focusDockToggle();
     }
+  }
+
+  /** Asks for census events only while the side panel shows them. */
+  function watchCensus(): void {
+    if (!docked) census = null;
+    simulation?.send({ type: 'watch-census', watching: docked });
   }
 
   function isEditable(target: EventTarget | null): boolean {
@@ -249,6 +259,9 @@
     const seed = randomSeed();
     simulation = new Simulation({
       frame: onFrame,
+      census: (next) => {
+        if (docked) census = next;
+      },
       rule: (running) => {
         rule = { running, rejected: null };
       },
@@ -264,6 +277,7 @@
     });
     simulation.send({ type: 'set-pedigree-budget', bytes: pedigreeBudget });
     simulation.send({ type: 'start', soup: { ...OPENING_SOUP, seed }, rate: SPEEDS[speed]!.rate, running });
+    watchCensus();
     const hint = setTimeout(() => {
       hintShown = false;
     }, HINT_MS);
@@ -367,6 +381,7 @@
       </header>
       {#if docked}
         {@render controls()}
+        <Stats {generation} {population} {census} />
         <section class="panel-settings" aria-labelledby="panel-settings-title">
           <h2 id="panel-settings-title">Settings</h2>
           {@render settings()}

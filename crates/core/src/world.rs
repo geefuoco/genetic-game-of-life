@@ -682,6 +682,11 @@ impl World {
         self.cells.iter().flatten().count()
     }
 
+    /// Population at Generations `0..=generation`, as in the [`Census`].
+    pub fn population_history(&self) -> &[usize] {
+        &self.population_history
+    }
+
     /// World width in Cells.
     pub fn width(&self) -> usize {
         self.width

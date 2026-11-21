@@ -148,6 +148,7 @@ Friendlier words the app may show players in place of glossary terms. Code, docs
 | strength, stronger | Dominance Level, higher Dominance Level; UI copy only, so the Dominance Level's "Strength" avoid still holds in code and docs |
 | gen | Generation |
 | alive | live Cells |
+| hidden everywhere | an Allele carried by live Cells but shown by none |
 | ancestors | Pedigree |
 | the pool | Allele Pool |
 | painted or seeded | painted, stamped or live in the World a run started as, so without Parents |
