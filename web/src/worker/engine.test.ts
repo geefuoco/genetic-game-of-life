@@ -100,6 +100,9 @@ function harness(options: { keepUp?: boolean } = {}): Harness {
       redo: () => world.redo(),
       canUndo: () => world.canUndo(),
       canRedo: () => world.canRedo(),
+      inspect: (x, y) => world.inspect(x, y),
+      inspection: () => world.inspection(),
+      stopInspecting: () => world.stopInspecting(),
       free: () => world.free(),
     };
   };
@@ -452,5 +455,64 @@ describe('editing', () => {
     start(h, 15, false, EMPTY);
     h.send({ type: 'paint', cells: [[40, 0]], genotype: [ORANGE, ORANGE] });
     expect(h.errors).toEqual(['cell (40, 0) is outside the world']);
+  });
+});
+
+describe('inspecting', () => {
+  const EMPTY: SoupSettings = { ...SOUP, width: 32, height: 32, density: 0, mutation: { rate: 0, magnitude: 0 } };
+  const ORANGE = { hue: 40, dominance: 2 };
+  const JADE = { hue: 160, dominance: 1 };
+
+  it('sends the inspected Organism with each frame: its Genotype, Phenotype, Birth Generation and lineages', () => {
+    const h = harness();
+    start(h, 15, false, EMPTY);
+    h.send({ type: 'step' });
+    h.send({ type: 'paint', cells: [[3, 4]], genotype: [JADE, ORANGE] });
+    h.send({ type: 'inspect', x: 3, y: 4 });
+    h.clock.advance(0);
+    expect(h.latest().inspection).toEqual({
+      x: 3,
+      y: 4,
+      birthGeneration: 1,
+      deathGeneration: null,
+      phenotype: 40,
+      alleles: [
+        { ...JADE, shown: false, lineage: [{ ...JADE, origin: 1, status: 'hidden' }] },
+        { ...ORANGE, shown: true, lineage: [{ ...ORANGE, origin: 1, status: 'living' }] },
+      ],
+    });
+  });
+
+  it('stays with the inspected Organism through its death, not the next Organism Born in its Cell', () => {
+    const h = harness();
+    start(h, 15, false, EMPTY);
+    h.send({ type: 'paint', cells: [[4, 5], [5, 5], [6, 5]], genotype: [ORANGE, ORANGE] });
+    h.send({ type: 'end-stroke' });
+    h.send({ type: 'inspect', x: 4, y: 5 });
+    h.send({ type: 'step' });
+    h.send({ type: 'step' });
+    h.clock.advance(0);
+    expect(h.latest().generation).toBe(2);
+    expect(h.latest().phenotypes[5 * 32 + 4]).toBe(40);
+    expect(h.latest().inspection).toMatchObject({ x: 4, y: 5, birthGeneration: 0, deathGeneration: 1 });
+  });
+
+  it('inspects nothing after a dead Cell is inspected, after inspection stops, or in a new Soup', () => {
+    const h = harness();
+    start(h, 15, false, EMPTY);
+    h.send({ type: 'paint', cells: [[3, 4]], genotype: [ORANGE, ORANGE] });
+    h.send({ type: 'inspect', x: 3, y: 4 });
+    h.send({ type: 'inspect', x: 9, y: 9 });
+    h.clock.advance(0);
+    expect(h.latest().inspection).toBeNull();
+
+    h.send({ type: 'inspect', x: 3, y: 4 });
+    h.send({ type: 'stop-inspecting' });
+    h.clock.advance(0);
+    expect(h.latest().inspection).toBeNull();
+
+    h.send({ type: 'inspect', x: 3, y: 4 });
+    start(h, 15, false, EMPTY);
+    expect(h.latest().inspection).toBeNull();
   });
 });

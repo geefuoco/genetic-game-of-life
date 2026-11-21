@@ -42,6 +42,38 @@ export type Genotype = readonly [Allele, Allele];
 /** A Cell's column and row. */
 export type CellPosition = readonly [x: number, y: number];
 
+/** Where an Allele stands in the current population: shown by a live Cell, carried but shown by none, or carried by none. */
+export type AlleleStatus = 'living' | 'hidden' | 'extinct';
+
+/** One Allele in a lineage. */
+export interface LineageAllele extends Allele {
+  /** The Generation the Allele first appeared in. */
+  origin: number;
+  status: AlleleStatus;
+}
+
+/** One Allele of an inspected Organism. */
+export interface InspectedAllele extends Allele {
+  /** Whether the Organism's Phenotype shows this Allele; a blend shows both. */
+  shown: boolean;
+  /** This Allele, then each Allele it descends from, back to its Founding Allele. */
+  lineage: LineageAllele[];
+}
+
+/** An Organism followed by the inspector: one continuous life at a Cell. */
+export interface Inspection {
+  x: number;
+  y: number;
+  /** The Generation of its Birth, or of its painting or stamping. */
+  birthGeneration: number;
+  /** The first Generation it was no longer live in, or `null` while it lives. */
+  deathGeneration: number | null;
+  /** Its Phenotype hue. */
+  phenotype: number;
+  /** Its Genotype. */
+  alleles: readonly [InspectedAllele, InspectedAllele];
+}
+
 /** The Patterns the core's library can stamp, by the core's names. */
 export type PatternName = 'glider' | 'lwss' | 'r-pentomino' | 'gosper-gun';
 
@@ -66,6 +98,9 @@ export type Command =
   | { type: 'end-stroke' }
   | { type: 'undo' }
   | { type: 'redo' }
+  /** Follows the Organism at a Cell in the frames' inspection, or nothing if the Cell is dead. */
+  | { type: 'inspect'; x: number; y: number }
+  | { type: 'stop-inspecting' }
   | { type: 'release'; phenotypes: Float32Array };
 
 /** One drawable state of the World. */
@@ -81,6 +116,8 @@ export interface Frame {
   canUndo: boolean;
   /** Whether an undone edit stroke can be redone. */
   canRedo: boolean;
+  /** The Organism being inspected, as of this frame's Generation. */
+  inspection: Inspection | null;
 }
 
 export type WorkerEvent =

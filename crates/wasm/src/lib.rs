@@ -1,7 +1,9 @@
 //! Thin wasm-bindgen layer over the core: a Soup World the web app's worker
 //! steps and reads Phenotypes from.
 
-use genetic_life_core::{Allele, MutationSettings, Pattern, Rule, Soup, World};
+use genetic_life_core::{
+    Allele, AlleleStatus, Inspection, MutationSettings, Pattern, Rule, Soup, World,
+};
 use std::fmt::Display;
 use wasm_bindgen::prelude::*;
 
@@ -109,6 +111,28 @@ impl WebWorld {
         self.world.can_redo()
     }
 
+    /// Starts following the Organism at `(x, y)` for its inspector, or
+    /// follows nothing if the Cell is dead.
+    pub fn inspect(&mut self, x: usize, y: usize) -> Result<(), JsError> {
+        self.world.inspect(x, y).map(|_| ()).map_err(js_error)
+    }
+
+    /// The inspection of the Organism being followed, if any, packed as
+    /// `[x, y, birth Generation, death Generation or -1 while it lives,
+    /// Phenotype hue]` and then, for each of its two Alleles, `[shown as 1
+    /// or hidden as 0, lineage length]` and the lineage from the Allele back
+    /// to its Founding Allele as `[hue, dominance, origin Generation, status]`
+    /// per Allele, with status 0 living, 1 hidden and 2 extinct.
+    pub fn inspection(&self) -> Option<Vec<f64>> {
+        self.world.inspection().as_ref().map(packed_inspection)
+    }
+
+    /// Stops following an Organism for its inspector.
+    #[wasm_bindgen(js_name = stopInspecting)]
+    pub fn stop_inspecting(&mut self) {
+        self.world.stop_inspecting();
+    }
+
     /// Applies the Rule `generations` times.
     pub fn step(&mut self, generations: u32) {
         self.world.run(u64::from(generations));
@@ -140,6 +164,35 @@ impl WebWorld {
         }
         Ok(())
     }
+}
+
+/// `inspection` laid out as `WebWorld::inspection` documents.
+fn packed_inspection(inspection: &Inspection) -> Vec<f64> {
+    let mut packed = vec![
+        inspection.x as f64,
+        inspection.y as f64,
+        inspection.birth_generation as f64,
+        inspection.death_generation.map_or(-1.0, |died| died as f64),
+        inspection.phenotype,
+    ];
+    for allele in &inspection.alleles {
+        packed.push(f64::from(u8::from(allele.shown)));
+        packed.push(allele.lineage.len() as f64);
+        for node in &allele.lineage {
+            let status = match node.status {
+                AlleleStatus::Living => 0.0,
+                AlleleStatus::Hidden => 1.0,
+                AlleleStatus::Extinct => 2.0,
+            };
+            packed.extend([
+                node.allele.hue,
+                f64::from(node.allele.dominance),
+                node.origin as f64,
+                status,
+            ]);
+        }
+    }
+    packed
 }
 
 /// The two Alleles in `[hue, dominance, hue, dominance]`.

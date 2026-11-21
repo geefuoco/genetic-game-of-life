@@ -311,7 +311,8 @@ impl AlleleTree {
             .expect("genotypes only refer to retained Alleles")
     }
 
-    fn slot(&self, id: AlleleId) -> Option<Slot> {
+    /// The slot holding `id`, if it is still retained.
+    pub(crate) fn slot(&self, id: AlleleId) -> Option<Slot> {
         let entry = self.entries.get(id.slot as usize)?;
         (entry.version == id.version && entry.record.is_some()).then_some(Slot(id.slot))
     }

@@ -4,13 +4,21 @@ use crate::allele_tree::AlleleTree;
 use crate::genetics::Genotype;
 use std::collections::HashMap;
 
+/// What a Cell holds: its Genotype while live, and the Birth Generation of
+/// its Organism.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct CellState {
+    pub(crate) genotype: Option<Genotype>,
+    pub(crate) born: u64,
+}
+
 /// The changes one stroke made. Undoing swaps them back into the World, which
 /// leaves the stroke holding what redoing needs, and the reverse.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Stroke {
     /// Each changed Cell's index and its other state: before the stroke while
     /// it can be undone, after it while it can be redone.
-    pub(crate) cells: HashMap<usize, Option<Genotype>>,
+    pub(crate) cells: HashMap<usize, CellState>,
     /// The other Allele Tree, if the stroke added brush Alleles.
     pub(crate) tree: Option<AlleleTree>,
 }
@@ -33,7 +41,7 @@ pub(crate) struct EditHistory {
 impl EditHistory {
     /// Records that the open stroke changed the Cell at `index` from
     /// `before`, discarding the strokes that could be redone.
-    pub(crate) fn record_cell(&mut self, index: usize, before: Option<Genotype>) {
+    pub(crate) fn record_cell(&mut self, index: usize, before: CellState) {
         self.redo.clear();
         self.open.cells.entry(index).or_insert(before);
     }

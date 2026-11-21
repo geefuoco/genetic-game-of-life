@@ -14,6 +14,14 @@ _Avoid_: Board, grid, universe, map
 One position in the World, either live or dead at any moment; a live Cell carries a Genotype.
 _Avoid_: Pixel, tile, square
 
+**Organism**:
+One continuous life at a Cell, from its Birth, painting or stamping until the Cell dies or is painted over; identified by its Cell and its Birth Generation. Its Genotype belongs to it, not to the Cell.
+_Avoid_: Creature, individual, Cell (when one life is meant)
+
+**Birth Generation**:
+The Generation in which an Organism was Born, painted or stamped.
+_Avoid_: Age, birthday
+
 **Neighbour**:
 One of the eight Cells surrounding a given Cell, wrapping across World edges.
 _Avoid_: Adjacent cell
@@ -137,5 +145,6 @@ Friendlier words the app may show players in place of glossary terms. Code, docs
 | colour gene | Allele; UI copy only, so the Pigment's "Color gene" avoid still holds in code and docs |
 | a colour name, such as "orange" | an Allele or Phenotype whose hue falls in that colour's range |
 | colour | Phenotype |
+| strength, stronger | Dominance Level, higher Dominance Level; UI copy only, so the Dominance Level's "Strength" avoid still holds in code and docs |
 | gen | Generation |
 | alive | live Cells |
