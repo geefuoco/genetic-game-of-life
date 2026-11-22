@@ -131,8 +131,26 @@ export type PatternName = 'glider' | 'lwss' | 'r-pentomino' | 'gosper-gun';
 /** Generations per second, or `'max'` for as fast as the worker can go. */
 export type Rate = number | 'max';
 
+/**
+ * Where a World came from: a new Soup, a Share Link, a Snapshot file the visitor imported, or the Snapshot autosaved in
+ * the browser.
+ */
+export type WorldSource = 'soup' | 'link' | 'snapshot' | 'autosave';
+
+/** Why the page asks for a Snapshot: to download it, or to autosave it. */
+export type SnapshotPurpose = 'export' | 'autosave';
+
 export type Command =
   | { type: 'start'; soup: SoupSettings; rate: Rate; running: boolean }
+  /** Starts the Soup a Share Link describes, or keeps the World as it is if the core cannot decode the link. */
+  | { type: 'open-link'; link: string; rate: Rate; running: boolean }
+  /**
+   * Resumes the World a Snapshot holds, or keeps the World as it is if the core cannot import it. `link` is the Share
+   * Link of the Soup run the Snapshot continues, as a `snapshot` event gave it, so the resumed World can still be shared.
+   */
+  | { type: 'import'; snapshot: Uint8Array; link: string | null; source: 'snapshot' | 'autosave'; rate: Rate; running: boolean }
+  /** Asks for a Snapshot of the World as it stands. */
+  | { type: 'take-snapshot'; purpose: SnapshotPurpose }
   | { type: 'play' }
   | { type: 'pause' }
   | { type: 'step' }
@@ -240,4 +258,15 @@ export type WorkerEvent =
   /** The Rule now running, in canonical B/S notation, after a `set-rule`. */
   | { type: 'rule'; rule: string }
   /** A `set-rule` the core refused, with its explanation; the running Rule is unchanged. */
-  | { type: 'rule-rejected'; rule: string; message: string };
+  | { type: 'rule-rejected'; rule: string; message: string }
+  /** A new World is running, with the Rule and Mutation settings it came with. */
+  | { type: 'world'; source: WorldSource; rule: string; mutation: MutationSettings }
+  /** An `open-link` or `import` the core refused, with its explanation; the World is unchanged. */
+  | { type: 'rejected'; source: Exclude<WorldSource, 'soup'>; message: string }
+  /**
+   * The Share Link that starts the run the World is on, sent whenever it changes; `null` once no link can reproduce
+   * the World, because it was edited, its Rule or Mutation changed after Generation 0, or it was imported without one.
+   */
+  | { type: 'share-link'; link: string | null }
+  /** A Snapshot after a `take-snapshot`, with the Share Link of the run it is on, if any. */
+  | { type: 'snapshot'; purpose: SnapshotPurpose; snapshot: Uint8Array; generation: number; link: string | null };
