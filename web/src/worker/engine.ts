@@ -434,8 +434,7 @@ export class Engine {
     const { clock } = this.options;
     const begun = clock.now();
     let ran = 0;
-    const rate = this.rate;
-    const due = Math.floor(((begun - this.paceStart) * rate) / 1000 + EPSILON) - this.paceDone;
+    const due = Math.floor(((begun - this.paceStart) * this.rate) / 1000 + EPSILON) - this.paceDone;
     while (ran < due && clock.now() - begun < SLICE_MS) {
       world.step(1);
       ran++;
@@ -445,7 +444,7 @@ export class Engine {
       this.paceStart = clock.now();
       this.paceDone = 0;
     }
-    const next = this.paceStart + ((this.paceDone + 1) * 1000) / rate;
+    const next = this.paceStart + ((this.paceDone + 1) * 1000) / this.rate;
     this.schedule(next - clock.now());
     if (ran > 0) this.publish();
   }

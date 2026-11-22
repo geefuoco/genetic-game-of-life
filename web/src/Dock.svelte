@@ -96,7 +96,7 @@
   }
 </script>
 
-<div class="dock" class:glass={!inPanel} class:docked={inPanel} role="group" aria-label="Simulation controls">
+<div class="dock" class:glass={!inPanel} class:in-panel={inPanel} role="group" aria-label="Simulation controls">
   <div class="group run">
     <button type="button" aria-label={running ? 'Pause' : 'Play'} title={running ? 'Pause (Space)' : 'Play (Space)'} onclick={ontoggleplay}>
       {#if running}
@@ -304,17 +304,17 @@
     background: rgb(255 255 255 / 8%);
   }
 
-  .docked {
+  .in-panel {
     flex-wrap: wrap;
     row-gap: 4px;
     background: rgb(255 255 255 / 3%);
   }
 
-  .docked .sep {
+  .in-panel .sep {
     display: none;
   }
 
-  .docked .run {
+  .in-panel .run {
     flex-basis: 100%;
   }
 </style>

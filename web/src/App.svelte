@@ -52,6 +52,8 @@
   const panelOpen = $derived(narrow ? drawerOpen : docked);
   /** Whether the controls float over the World, with the Lineage card and settings popover they open. */
   const floating = $derived(!narrow && !docked);
+  /** Whether the side panel sits beside the World rather than over it. */
+  const sideways = $derived(docked && !narrow);
   let running = $state(true);
   let speed = $state(DEFAULT_SPEED);
   let generation = $state(0);
@@ -338,6 +340,11 @@
     watchCensus(censusShown);
   });
 
+  /** Closes the drawer once the viewport is wide enough not to need one, so it does not reopen on its own when the viewport narrows again. */
+  $effect(() => {
+    if (!narrow) drawerOpen = false;
+  });
+
   function isEditable(target: EventTarget | null): boolean {
     return target instanceof Element && target.closest('input, textarea, select, [contenteditable]') !== null;
   }
@@ -361,14 +368,15 @@
   }
 
   function onkeydown(event: KeyboardEvent): void {
-    if (event.key === 'Escape' && narrow && drawerOpen) {
-      event.preventDefault();
-      void toggleDock(true);
-      return;
-    }
     if (event.key === 'Escape' && settingsOpen && floating) {
       event.preventDefault();
       void closeSettings();
+      return;
+    }
+    if (event.key === 'Escape' && isTyping(event.target)) return;
+    if (event.key === 'Escape' && narrow && drawerOpen) {
+      event.preventDefault();
+      void toggleDock(true);
       return;
     }
     if (event.key === 'Escape' && inspection) {
@@ -514,7 +522,7 @@
   <p class="problem" role="alert">{problem}</p>
 {/if}
 
-<div class="app" class:docked={docked && !narrow} class:narrow hidden={problem !== null}>
+<div class="app" class:docked={sideways} class:narrow hidden={problem !== null}>
   <main class="stage" bind:clientWidth={stageWidth} bind:clientHeight={stageHeight}>
     <WorldView
       bind:this={view}
@@ -549,7 +557,7 @@
     {#if highlighted}
       <HighlightPill hue={highlighted.hue} counts={highlightCounts} onclear={() => highlight(null)} />
     {/if}
-    <header class="wordmark" aria-hidden={docked && !narrow}>
+    <header class="wordmark" aria-hidden={sideways}>
       <h1>genetic life</h1>
       <p data-testid="stats">{stats}</p>
     </header>

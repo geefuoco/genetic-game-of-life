@@ -42,14 +42,22 @@
     highlighted: { id: AlleleId; hue: number } | null;
   }
 
+  /** A finger or pointer pressed on the World, and where it is now, relative to the canvas. */
+  interface Pressed {
+    id: number;
+    at: Point;
+  }
+
   let { tool, onsupport, onrelease, onstroke, onstamp, onstrokeend, oninspect, inspected, anchor = $bindable(null), highlighted }: Props = $props();
 
   /** Wheel zoom per pixel of scroll. */
   const WHEEL_ZOOM = 0.002;
   /** Pixels per line or page of scroll, for wheels that report in those units. */
   const LINE_PX = 16;
-  /** Furthest a look press can move, in CSS pixels, and still count as a click that inspects. */
+  /** Furthest a look press of a mouse or pen can move, in CSS pixels, and still count as a click that inspects. */
   const CLICK_SLOP = 4;
+  /** The same for a finger, which drifts more during a tap. */
+  const TAP_SLOP = 10;
 
   let canvas: HTMLCanvasElement;
   let renderer: Renderer | null = null;
@@ -59,14 +67,14 @@
   let pending: Frame | null = null;
   let dirty = false;
   let drag: { x: number; y: number } | null = null;
-  /** Where the look tool was pressed, until the press moves too far to be a click. */
-  let pressedAt: { x: number; y: number } | null = null;
+  /** Where the look tool was pressed, and how far it may move, until the press moves too far to be a click. */
+  let pressedAt: { x: number; y: number; slop: number } | null = null;
   /** Where the paint or erase tool last was during a press, in Cell coordinates. */
   let brushAt: Point | null = null;
   let editing = false;
   let grabbing = $state(false);
-  /** Where each finger or pointer pressed on the World is, relative to the canvas. */
-  let pointers: { id: number; at: Point }[] = [];
+  /** The fingers or pointers pressed on the World, in the order they were pressed. */
+  let pointers: Pressed[] = [];
   /** Whether two fingers have pinched since the last time none was down, so the fingers left neither pan, edit nor inspect. */
   let pinching = false;
 
@@ -120,8 +128,7 @@
   /** The fractional Cell coordinates under a pointer, or `null` before the first frame. */
   function cellAt(event: PointerEvent): Point | null {
     if (!camera || !world) return null;
-    const bounds = canvas.getBoundingClientRect();
-    return screenToCell(camera, world, { x: event.clientX - bounds.left, y: event.clientY - bounds.top });
+    return screenToCell(camera, world, canvasPoint(event));
   }
 
   function canvasPoint(event: PointerEvent): Point {
@@ -135,7 +142,8 @@
     return a && b ? [a.at, b.at] : null;
   }
 
-  function pressed(event: PointerEvent): { id: number; at: Point } | undefined {
+  /** The press `event` belongs to, if it is one the World is following. */
+  function pressOf(event: PointerEvent): Pressed | undefined {
     return pointers.find((pointer) => pointer.id === event.pointerId);
   }
 
@@ -149,7 +157,7 @@
     }
     if (tool === 'look') {
       drag = { x: event.clientX, y: event.clientY };
-      pressedAt = drag;
+      pressedAt = { ...drag, slop: event.pointerType === 'touch' ? TAP_SLOP : CLICK_SLOP };
       grabbing = true;
       return;
     }
@@ -171,7 +179,7 @@
   }
 
   function onpointermove(event: PointerEvent): void {
-    const pointer = pressed(event);
+    const pointer = pressOf(event);
     if (!pointer) return;
     const from = pinchPoints();
     pointer.at = canvasPoint(event);
@@ -192,14 +200,14 @@
       return;
     }
     if (!drag || !camera || !world) return;
-    if (pressedAt && Math.hypot(event.clientX - pressedAt.x, event.clientY - pressedAt.y) > CLICK_SLOP) pressedAt = null;
+    if (pressedAt && Math.hypot(event.clientX - pressedAt.x, event.clientY - pressedAt.y) > pressedAt.slop) pressedAt = null;
     camera = panBy(camera, world, event.clientX - drag.x, event.clientY - drag.y);
     drag = { x: event.clientX, y: event.clientY };
     dirty = true;
   }
 
   function onpointerup(event: PointerEvent): void {
-    if (!pressed(event)) return;
+    if (!pressOf(event)) return;
     if (pressedAt && camera && world) {
       const point = canvasPoint(event);
       const shown = worldWindow(camera, world, viewport);
@@ -212,7 +220,7 @@
 
   /** Forgets a finger or pointer that has lifted or been cancelled, ending the gesture with it. */
   function lift(event: PointerEvent): void {
-    if (!pressed(event)) return;
+    if (!pressOf(event)) return;
     pointers = pointers.filter((pointer) => pointer.id !== event.pointerId);
     if (pointers.length === 0) pinching = false;
     endGesture();

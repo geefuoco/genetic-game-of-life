@@ -1,23 +1,19 @@
-import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
+import { accessibilityViolations } from './axe.ts';
 import { stats } from './stats.ts';
-
-/**
- * The opening view on a 412 by 839 phone: the 160 by 160 World at 9 px per
- * Cell, with the top left of Cell (80, 80) at the middle of the screen. The
- * drawer opens over the World, so the stage always fills the screen.
- */
-const SCALE = 9;
-const MIDDLE = { x: 206, y: 419.5 };
+import { centreOf as centreOn, openPaused } from './world.ts';
 
 interface Point {
   x: number;
   y: number;
 }
 
-function centreOf(x: number, y: number, scale = SCALE): Point {
-  return { x: MIDDLE.x + (x - 80) * scale + scale / 2, y: MIDDLE.y + (y - 80) * scale + scale / 2 };
-}
+/** The middle of Cell `(x, y)` in the opening view of the phone. */
+const centreOf = (x: number, y: number): Point => centreOn(x, y, 'phone');
+/** The top left of Cell (80, 80), at the middle of the screen until the World moves or zooms. */
+const MIDDLE = { x: 206, y: 419.5 };
+/** Width of the World in CSS pixels at the opening zoom. */
+const WORLD_WIDTH = 160 * 9;
 
 /** How long fingers rest before lifting after moving, so the browser sees a drag that stopped rather than a fling, which would swallow the next tap. */
 const REST_MS = 150;
@@ -39,12 +35,6 @@ async function open(page: Page): Promise<void> {
   await expect.poll(async () => (await stats(page)).generation).toBeGreaterThan(2);
 }
 
-async function openPaused(page: Page): Promise<void> {
-  await open(page);
-  await page.getByRole('button', { name: 'Pause' }).tap();
-  await page.waitForTimeout(300);
-}
-
 /** Opens the drawer, picks a tool and closes the drawer again. */
 async function pickTool(page: Page, name: string): Promise<void> {
   await page.getByRole('button', { name: 'Open the controls' }).tap();
@@ -62,11 +52,6 @@ async function paintLoneCarrier(page: Page): Promise<void> {
   const cell = centreOf(80, 80);
   await page.touchscreen.tap(cell.x, cell.y);
   await pickTool(page, 'Look');
-}
-
-async function violations(page: Page): Promise<string[]> {
-  const results = await new AxeBuilder({ page }).analyze();
-  return results.violations.map((violation) => `${violation.id}: ${violation.nodes.map((node) => node.target.join(' ')).join(', ')}`);
 }
 
 test('opens on a phone with the run controls in a small bar and touch hints', async ({ page }) => {
@@ -119,6 +104,13 @@ test('the controls drawer holds every control, and closes with its button, Escap
   await page.keyboard.press('d');
   await expect(drawer).toBeHidden();
 
+  await opener.tap();
+  const seed = drawer.getByRole('textbox', { name: 'Seed' });
+  await seed.tap();
+  await page.keyboard.press('Escape');
+  await expect(drawer).toBeVisible();
+  await expect(seed).toBeFocused();
+
   await page.reload();
   await expect(opener).toBeVisible();
   await expect(drawer).toBeHidden();
@@ -134,11 +126,11 @@ test('tapping an Organism inspects it', async ({ page }) => {
   await expect(inspector).toBeInViewport({ ratio: 1 });
 });
 
-/** At twice the zoom, the middle of Cell (80, 80) is over Cell (81, 81) at the opening zoom, which the eraser cleared. */
+/** At twice the zoom, the middle of Cell (80, 80) is 9 px from its corner, over Cell (81, 81) at the opening zoom, which the eraser cleared. */
 test('pinching zooms about the point between the fingers without inspecting', async ({ page }) => {
   await openPaused(page);
   await paintLoneCarrier(page);
-  const beside = centreOf(80, 80, SCALE * 2);
+  const beside = { x: MIDDLE.x + 9, y: MIDDLE.y + 9 };
 
   await touch(page, [
     { from: { x: MIDDLE.x - 40, y: MIDDLE.y }, to: { x: MIDDLE.x - 80, y: MIDDLE.y } },
@@ -154,7 +146,7 @@ test('pinching zooms about the point between the fingers without inspecting', as
 test('dragging pans the World and wraps round the torus', async ({ page }) => {
   await openPaused(page);
   await paintLoneCarrier(page);
-  const step = (160 * SCALE + 2 * SCALE) / 4;
+  const step = (WORLD_WIDTH + 2 * 9) / 4;
   for (let i = 0; i < 4; i++) await touch(page, [{ from: { x: 24, y: 600 }, to: { x: 24 + step, y: 600 } }]);
   await page.waitForTimeout(200);
   await expect(page.getByRole('region', { name: /cell$/ })).toHaveCount(0);
@@ -166,8 +158,8 @@ test('dragging pans the World and wraps round the torus', async ({ page }) => {
 
 test('the phone view passes an automated accessibility check, with the drawer closed and open', async ({ page }) => {
   await open(page);
-  expect(await violations(page)).toEqual([]);
+  expect(await accessibilityViolations(page)).toEqual([]);
   await page.getByRole('button', { name: 'Open the controls' }).tap();
   await expect(page.getByRole('complementary', { name: 'Controls drawer' })).toBeVisible();
-  expect(await violations(page)).toEqual([]);
+  expect(await accessibilityViolations(page)).toEqual([]);
 });

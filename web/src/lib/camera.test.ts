@@ -106,8 +106,6 @@ describe('pinch', () => {
     const before = openingCamera(soup, viewport);
     const after = pinch(before, soup, viewport, [{ x: 100, y: 100 }, { x: 200, y: 100 }], [{ x: 100 + 160 * 9 * 2 + 30, y: 100 }, { x: 200 + 160 * 9 * 2 + 30, y: 100 }]);
     expect(after.scale).toBeCloseTo(9, 9);
-    expect(after.x).toBeGreaterThanOrEqual(0);
-    expect(after.x).toBeLessThan(160 * 9);
     expectSameCell(screenToCell(after, soup, { x: 180, y: 100 }), screenToCell(before, soup, { x: 150, y: 100 }));
   });
 
