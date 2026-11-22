@@ -150,7 +150,7 @@ export type Command =
    */
   | { type: 'import'; snapshot: Uint8Array; link: string | null; source: 'snapshot' | 'autosave'; rate: Rate; running: boolean }
   /** Asks for a Snapshot of the World as it stands. */
-  | { type: 'save'; purpose: SnapshotPurpose }
+  | { type: 'take-snapshot'; purpose: SnapshotPurpose }
   | { type: 'play' }
   | { type: 'pause' }
   | { type: 'step' }
@@ -268,5 +268,5 @@ export type WorkerEvent =
    * the World, because it was edited, its Rule or Mutation changed after Generation 0, or it was imported without one.
    */
   | { type: 'share-link'; link: string | null }
-  /** A Snapshot after a `save`, with the Share Link of the run it is on, if any. */
+  /** A Snapshot after a `take-snapshot`, with the Share Link of the run it is on, if any. */
   | { type: 'snapshot'; purpose: SnapshotPurpose; snapshot: Uint8Array; generation: number; link: string | null };

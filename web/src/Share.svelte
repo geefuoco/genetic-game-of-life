@@ -41,7 +41,7 @@
     </div>
   {:else}
     <p class="note" data-testid="no-share-link">
-      A link can only replay a soup from its start, and this world has been edited or changed since. Export a snapshot to keep or share it.
+      A link can only replay an unedited soup from its start. Export a snapshot to keep or share this world.
     </p>
   {/if}
   <div class="files">

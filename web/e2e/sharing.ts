@@ -33,9 +33,9 @@ export async function exportSnapshot(page: Page): Promise<{ name: string; bytes:
 }
 
 /** Imports a Snapshot file through the settings. */
-export async function importSnapshot(page: Page, bytes: Buffer, name = 'world.ggls'): Promise<void> {
+export async function importSnapshot(page: Page, bytes: Buffer): Promise<void> {
   const settings = await openSettings(page);
-  await settings.getByLabel('Import snapshot').setInputFiles({ name, mimeType: 'application/octet-stream', buffer: bytes });
+  await settings.getByLabel('Import snapshot').setInputFiles({ name: 'world.ggls', mimeType: 'application/octet-stream', buffer: bytes });
 }
 
 /** Steps one Generation at a time until the World reaches `generation`. */

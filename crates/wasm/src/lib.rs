@@ -350,6 +350,7 @@ impl WebSoup {
         self.soup.share_link()
     }
 
+    /// The Seed fixing every random choice in the run.
     pub fn seed(&self) -> u64 {
         self.soup.seed
     }
@@ -359,28 +360,34 @@ impl WebSoup {
         self.soup.rule.to_string()
     }
 
+    /// World width in Cells.
     pub fn width(&self) -> usize {
         self.soup.width
     }
 
+    /// World height in Cells.
     pub fn height(&self) -> usize {
         self.soup.height
     }
 
+    /// Probability that a Cell starts live.
     pub fn density(&self) -> f64 {
         self.soup.density
     }
 
+    /// Number of Founding Alleles.
     #[wasm_bindgen(js_name = foundingAlleles)]
     pub fn founding_alleles(&self) -> usize {
         self.soup.founding_alleles
     }
 
+    /// Probability that each Allele passed on at a Birth mutates.
     #[wasm_bindgen(js_name = mutationRate)]
     pub fn mutation_rate(&self) -> f64 {
         self.soup.mutation.rate()
     }
 
+    /// Largest hue shift of a mutant from its source Allele, in degrees.
     #[wasm_bindgen(js_name = mutationMagnitude)]
     pub fn mutation_magnitude(&self) -> f64 {
         self.soup.mutation.magnitude()

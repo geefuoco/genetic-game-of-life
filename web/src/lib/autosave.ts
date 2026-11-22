@@ -1,6 +1,6 @@
 /** Keeps the current World in the browser's IndexedDB, so a reload resumes it. */
 
-import type { SavedWorld } from './persistence.ts';
+import type { AutosavedWorld } from './persistence.ts';
 
 /** How often the current World is autosaved, in ms. */
 export const AUTOSAVE_MS = 5000;
@@ -12,9 +12,9 @@ const KEY = 'world';
 /** Where the current World is autosaved. */
 export interface WorldStore {
   /** The autosaved World, or `null` if there is none or storage cannot be read. */
-  load(): Promise<SavedWorld | null>;
+  load(): Promise<AutosavedWorld | null>;
   /** Autosaves a World over the last one, doing nothing when storage cannot be written. */
-  save(world: SavedWorld): Promise<void>;
+  save(world: AutosavedWorld): Promise<void>;
 }
 
 /** The browser's IndexedDB as a {@link WorldStore}. */
@@ -36,7 +36,7 @@ export function browserWorldStore(): WorldStore {
     async load() {
       try {
         const stored = await requested((await open()).transaction(STORE, 'readonly').objectStore(STORE).get(KEY));
-        return asSavedWorld(stored);
+        return asAutosavedWorld(stored);
       } catch {
         return null;
       }
@@ -58,8 +58,8 @@ function requested<T>(request: IDBRequest<T>): Promise<T> {
   });
 }
 
-/** `stored` if it has the shape of a {@link SavedWorld}, otherwise `null`. */
-function asSavedWorld(stored: unknown): SavedWorld | null {
+/** `stored` if it has the shape of a {@link AutosavedWorld}, otherwise `null`. */
+function asAutosavedWorld(stored: unknown): AutosavedWorld | null {
   if (typeof stored !== 'object' || stored === null) return null;
   const { snapshot, link } = stored as Record<string, unknown>;
   if (!(snapshot instanceof Uint8Array) || (link !== null && typeof link !== 'string')) return null;

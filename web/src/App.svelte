@@ -18,7 +18,7 @@
   import { currentDevice, defaultPedigreeBudget, MAX_PEDIGREE_DEPTH, PEDIGREE_DEPTH, PEDIGREE_DEPTH_STEP } from './lib/pedigree.ts';
   import { DEFAULT_SPEED, SPEEDS, cycleSpeed, nudgeSpeed } from './lib/speed.ts';
   import { paletteCss } from './lib/palette.ts';
-  import { openingPlan, rejectionNotice, shareUrl, snapshotFileName, type Opening } from './lib/persistence.ts';
+  import { linkInFragment, openingPlan, rejectionNotice, shareUrl, snapshotFileName, type Opening } from './lib/persistence.ts';
   import type { Rect } from './lib/camera.ts';
   import type { AlleleId, Census, CellPosition, Frame, Inspection, MutationSettings, Pedigree, SnapshotPurpose, SoupSettings, WorldSource } from './protocol.ts';
   import { Simulation } from './simulation.ts';
@@ -86,8 +86,8 @@
   let opening: Opening[] = [];
   /** Whether a World has opened, so a refused Share Link or Snapshot leaves one running. */
   let opened = false;
-  /** Whether a frame has shown a change since the last autosave, so an unchanged World is not saved again. */
-  let unsaved = false;
+  /** Whether the World or its settings may have changed since the last autosave, so an unchanged World is not autosaved again. */
+  let changedSinceAutosave = false;
   /** The core's Share Link of the run the World is on, or `null` when none can reproduce it. */
   let shareLink = $state<string | null>(null);
   let notice = $state.raw<{ kind: 'info' | 'error'; text: string } | null>(null);
@@ -109,7 +109,7 @@
   );
 
   function onFrame(frame: Frame): void {
-    unsaved = true;
+    changedSinceAutosave = true;
     generation = frame.generation;
     population = frame.population;
     canUndo = frame.canUndo;
@@ -198,6 +198,7 @@
 
   function setMutation(next: MutationSettings): void {
     mutation = next;
+    changedSinceAutosave = true;
     simulation?.send({ type: 'set-mutation', mutation: next });
   }
 
@@ -207,7 +208,7 @@
     if (!next || !simulation) return;
     const rate = SPEEDS[speed]!.rate;
     if (next.from === 'link') simulation.send({ type: 'open-link', link: next.link, rate, running });
-    else if (next.from === 'autosave') simulation.send({ type: 'import', ...next.saved, source: 'autosave', rate, running });
+    else if (next.from === 'autosave') simulation.send({ type: 'import', ...next.autosaved, source: 'autosave', rate, running });
     else simulation.send({ type: 'start', soup: { ...OPENING_SOUP, seed: randomSeed() }, rate, running });
   }
 
@@ -217,7 +218,7 @@
 
   /** Opens the Share Link in the address, if there is one, and takes it out of the address so a reload resumes the autosaved World. */
   function openAddressLink(): void {
-    const link = location.hash.replace(/^#/, '');
+    const link = linkInFragment(location.hash);
     if (link === '') return;
     clearAddressLink();
     simulation?.send({ type: 'open-link', link, rate: SPEEDS[speed]!.rate, running });
@@ -232,6 +233,8 @@
     highlightCounts = null;
     if (world.source === 'snapshot') notice = { kind: 'info', text: IMPORTED };
     else if (notice?.kind === 'info') notice = null;
+    changedSinceAutosave = true;
+    autosave();
   }
 
   function onRejected(rejected: { source: Exclude<WorldSource, 'soup'>; message: string }): void {
@@ -239,21 +242,21 @@
     if (!opened) openNext();
   }
 
-  function onSnapshot(saved: { purpose: SnapshotPurpose; snapshot: Uint8Array; generation: number; link: string | null }): void {
-    if (saved.purpose === 'autosave') {
-      void worldStore.save({ snapshot: saved.snapshot, link: saved.link });
+  function onSnapshot(taken: { purpose: SnapshotPurpose; snapshot: Uint8Array; generation: number; link: string | null }): void {
+    if (taken.purpose === 'autosave') {
+      void worldStore.save({ snapshot: taken.snapshot, link: taken.link });
       return;
     }
-    const url = URL.createObjectURL(new Blob([saved.snapshot as Uint8Array<ArrayBuffer>], { type: 'application/octet-stream' }));
+    const url = URL.createObjectURL(new Blob([taken.snapshot as Uint8Array<ArrayBuffer>], { type: 'application/octet-stream' }));
     const download = document.createElement('a');
     download.href = url;
-    download.download = snapshotFileName(saved.generation);
+    download.download = snapshotFileName(taken.generation);
     download.click();
     setTimeout(() => URL.revokeObjectURL(url), 0);
   }
 
   function exportSnapshot(): void {
-    simulation?.send({ type: 'save', purpose: 'export' });
+    simulation?.send({ type: 'take-snapshot', purpose: 'export' });
   }
 
   async function importSnapshot(file: File): Promise<void> {
@@ -262,9 +265,9 @@
   }
 
   function autosave(): void {
-    if (!opened || !unsaved) return;
-    unsaved = false;
-    simulation?.send({ type: 'save', purpose: 'autosave' });
+    if (!opened || !changedSinceAutosave) return;
+    changedSinceAutosave = false;
+    simulation?.send({ type: 'take-snapshot', purpose: 'autosave' });
   }
 
   function newSoup(soup: NewSoup): void {
@@ -379,6 +382,7 @@
       },
       rule: (running) => {
         rule = { running, rejected: null };
+        changedSinceAutosave = true;
       },
       pedigree: (next, depth) => {
         if (following) pedigree = next && { pedigree: next, depth };
@@ -398,8 +402,8 @@
     });
     simulation.send({ type: 'set-pedigree-budget', bytes: pedigreeBudget });
     const fragment = location.hash;
-    void worldStore.load().then((saved) => {
-      opening = openingPlan(fragment, saved);
+    void worldStore.load().then((autosaved) => {
+      opening = openingPlan(fragment, autosaved);
       clearAddressLink();
       openNext();
     });

@@ -132,9 +132,9 @@ export class Engine {
   /** The timer for a census held back so censuses stay {@link CENSUS_MS} apart. */
   private censusTimer: number | null = null;
   /** The Soup whose run the World is, while a Share Link can reproduce it. */
-  private origin: SoupSettings | null = null;
-  /** The Share Link last sent, so it is only sent again when it changes. */
-  private sentLink: string | null = null;
+  private linkedSoup: SoupSettings | null = null;
+  /** The Share Link of {@link linkedSoup}, as last sent to the page. */
+  private link: string | null = null;
 
   constructor(options: EngineOptions) {
     this.options = options;
@@ -143,7 +143,7 @@ export class Engine {
   handle(command: Command): void {
     switch (command.type) {
       case 'start':
-        this.install(() => this.createSoup(command.soup), { source: 'soup', origin: command.soup, rate: command.rate, running: command.running });
+        this.install(() => this.createSoup(command.soup), { source: 'soup', linkedSoup: command.soup, rate: command.rate, running: command.running });
         break;
       case 'open-link':
         this.openLink(command.link, command.rate, command.running);
@@ -151,8 +151,8 @@ export class Engine {
       case 'import':
         this.importSnapshot(command);
         break;
-      case 'save':
-        this.save(command.purpose);
+      case 'take-snapshot':
+        this.takeSnapshot(command.purpose);
         break;
       case 'play':
         if (!this.running) {
@@ -257,20 +257,20 @@ export class Engine {
       this.options.send({ type: 'rejected', source: 'link', message: messageOf(error) }, []);
       return;
     }
-    this.install(() => this.createSoup(soup), { source: 'link', origin: soup, rate, running });
+    this.install(() => this.createSoup(soup), { source: 'link', linkedSoup: soup, rate, running });
   }
 
   private importSnapshot(command: Extract<Command, { type: 'import' }>): void {
     this.install(() => this.options.importWorld(command.snapshot), {
       source: command.source,
-      origin: this.soupOf(command.link),
+      linkedSoup: this.decodedOrNull(command.link),
       rate: command.rate,
       running: command.running,
     });
   }
 
   /** The Soup a Share Link that came with a Snapshot describes, or `null` if there is none or it cannot be decoded. */
-  private soupOf(link: string | null): SoupSettings | null {
+  private decodedOrNull(link: string | null): SoupSettings | null {
     if (link === null) return null;
     try {
       return this.options.decodeShareLink(link);
@@ -283,7 +283,7 @@ export class Engine {
    * Replaces the World with the one `create` makes, once it is ready. If `create` throws, the World is left as it was
    * and the failure is reported: as an error for a new Soup, as a rejection for anything the visitor brought in.
    */
-  private install(create: () => EngineWorld, next: { source: WorldSource; origin: SoupSettings | null; rate: Rate; running: boolean }): void {
+  private install(create: () => EngineWorld, next: { source: WorldSource; linkedSoup: SoupSettings | null; rate: Rate; running: boolean }): void {
     let world: EngineWorld | null = null;
     try {
       world = create();
@@ -309,7 +309,7 @@ export class Engine {
     this.free = Array.from({ length: BUFFERS }, () => new Float32Array(this.cells));
     this.rate = next.rate;
     this.options.send({ type: 'world', source: next.source, rule: world.rule(), mutation: mutationOf(world) }, []);
-    this.setOrigin(next.origin && { ...next.origin, rule: world.rule(), mutation: mutationOf(world) });
+    this.setLinkedSoup(next.linkedSoup && { ...next.linkedSoup, rule: world.rule(), mutation: mutationOf(world) });
     this.publish();
     if (next.running) {
       this.running = true;
@@ -318,28 +318,28 @@ export class Engine {
   }
 
   /** Records the Soup whose run the World is, or `null` once a Share Link cannot reproduce it, and sends a changed Share Link. */
-  private setOrigin(origin: SoupSettings | null): void {
-    this.origin = origin;
+  private setLinkedSoup(soup: SoupSettings | null): void {
+    this.linkedSoup = soup;
     let link: string | null = null;
-    if (origin) {
+    if (soup) {
       try {
-        link = this.options.shareLink(origin);
+        link = this.options.shareLink(soup);
       } catch {
-        this.origin = null;
+        this.linkedSoup = null;
       }
     }
-    if (link === this.sentLink) return;
-    this.sentLink = link;
+    if (link === this.link) return;
+    this.link = link;
     this.options.send({ type: 'share-link', link }, []);
   }
 
   /** Keeps the Share Link through a change of the Rule or Mutation settings at Generation 0, and drops it after: a Share Link only describes how a run starts. */
   private settingChanged(world: EngineWorld): void {
-    if (!this.origin) return;
-    const { rule, mutation } = this.origin;
+    if (!this.linkedSoup) return;
+    const { rule, mutation } = this.linkedSoup;
     const current = mutationOf(world);
     if (rule === world.rule() && mutation.rate === current.rate && mutation.magnitude === current.magnitude) return;
-    this.setOrigin(world.generation() === 0 ? { ...this.origin, rule: world.rule(), mutation: current } : null);
+    this.setLinkedSoup(world.generation() === 0 ? { ...this.linkedSoup, rule: world.rule(), mutation: current } : null);
   }
 
   private setRule(rule: string): void {
@@ -366,15 +366,15 @@ export class Engine {
   /** Edits the World as {@link change} does; a Share Link cannot reproduce an edited World. */
   private edit(apply: (world: EngineWorld) => void): void {
     if (!this.world) return;
-    this.setOrigin(null);
+    this.setLinkedSoup(null);
     this.change(apply);
   }
 
-  private save(purpose: SnapshotPurpose): void {
+  private takeSnapshot(purpose: SnapshotPurpose): void {
     const world = this.world;
     if (!world) return;
     const snapshot = world.snapshot();
-    this.options.send({ type: 'snapshot', purpose, snapshot, generation: world.generation(), link: this.sentLink }, [snapshot.buffer]);
+    this.options.send({ type: 'snapshot', purpose, snapshot, generation: world.generation(), link: this.link }, [snapshot.buffer]);
   }
 
   /** Changes the World, or what it inspects, between Generations and shows the result, reporting a change the core refuses. */

@@ -1,21 +1,40 @@
 import { describe, expect, it } from 'vitest';
-import { openingPlan, rejectionNotice, shareUrl, snapshotFileName } from './persistence.ts';
+import { linkInFragment, openingPlan, rejectionNotice, shareUrl, snapshotFileName } from './persistence.ts';
 
 const LINK = 'v=1&seed=42&rule=B3/S23&width=160&height=160&density=0.3&alleles=8&mutation-rate=0.01&mutation-magnitude=30';
-const SAVED = { snapshot: Uint8Array.of(1, 2, 3), link: null };
+const AUTOSAVED = { snapshot: Uint8Array.of(1, 2, 3), link: null };
 
 describe('the opening plan', () => {
   it('opens a Share Link in the address first, then the autosaved World, then a fresh Soup', () => {
-    expect(openingPlan(`#${LINK}`, SAVED)).toEqual([{ from: 'link', link: LINK }, { from: 'autosave', saved: SAVED }, { from: 'soup' }]);
+    expect(openingPlan(`#${LINK}`, AUTOSAVED)).toEqual([{ from: 'link', link: LINK }, { from: 'autosave', autosaved: AUTOSAVED }, { from: 'soup' }]);
   });
 
   it('restores the autosaved World when the address has no Share Link', () => {
-    expect(openingPlan('', SAVED)).toEqual([{ from: 'autosave', saved: SAVED }, { from: 'soup' }]);
-    expect(openingPlan('#', SAVED)).toEqual([{ from: 'autosave', saved: SAVED }, { from: 'soup' }]);
+    expect(openingPlan('', AUTOSAVED)).toEqual([{ from: 'autosave', autosaved: AUTOSAVED }, { from: 'soup' }]);
+    expect(openingPlan('#', AUTOSAVED)).toEqual([{ from: 'autosave', autosaved: AUTOSAVED }, { from: 'soup' }]);
   });
 
   it('opens a fresh Soup when nothing was autosaved', () => {
     expect(openingPlan('', null)).toEqual([{ from: 'soup' }]);
+  });
+});
+
+describe('the Share Link in an address fragment', () => {
+  it('is the fragment without its #', () => {
+    expect(linkInFragment(`#${LINK}`)).toBe(LINK);
+  });
+
+  it('is undone of the percent-encoding something along the way may have added', () => {
+    expect(linkInFragment('#v=1&seed=42&rule=B3%2FS23')).toBe('v=1&seed=42&rule=B3/S23');
+  });
+
+  it('is left as it is when its percent-encoding is malformed, for the core to explain', () => {
+    expect(linkInFragment('#v=1&seed=%E0%A4%A')).toBe('v=1&seed=%E0%A4%A');
+  });
+
+  it('is empty when the address has no fragment', () => {
+    expect(linkInFragment('')).toBe('');
+    expect(linkInFragment('#')).toBe('');
   });
 });
 

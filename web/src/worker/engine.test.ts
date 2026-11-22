@@ -60,9 +60,9 @@ class FakeClock implements Clock {
 }
 
 /** The events about where the World came from and how it is kept. */
-type Persistence = Extract<WorkerEvent, { type: 'world' | 'rejected' | 'share-link' | 'snapshot' }>;
+const PERSISTENCE = ['world', 'rejected', 'share-link', 'snapshot'] as const;
 
-const PERSISTENCE: readonly WorkerEvent['type'][] = ['world', 'rejected', 'share-link', 'snapshot'];
+type Persistence = Extract<WorkerEvent, { type: (typeof PERSISTENCE)[number] }>;
 
 interface Harness {
   clock: FakeClock;
@@ -179,7 +179,7 @@ function harness(options: { keepUp?: boolean } = {}): Harness {
 }
 
 function isPersistence(event: WorkerEvent): event is Persistence {
-  return PERSISTENCE.includes(event.type);
+  return (PERSISTENCE as readonly WorkerEvent['type'][]).includes(event.type);
 }
 
 /** The Share Links sent, in order. */
@@ -848,8 +848,8 @@ describe('Snapshots', () => {
   const snapshots = (h: Harness): Extract<Persistence, { type: 'snapshot' }>[] =>
     h.persistence.flatMap((event) => (event.type === 'snapshot' ? [event] : []));
 
-  function saved(h: Harness, purpose: 'export' | 'autosave' = 'export'): Extract<Persistence, { type: 'snapshot' }> {
-    h.send({ type: 'save', purpose });
+  function taken(h: Harness, purpose: 'export' | 'autosave' = 'export'): Extract<Persistence, { type: 'snapshot' }> {
+    h.send({ type: 'take-snapshot', purpose });
     const snapshot = snapshots(h).at(-1);
     if (!snapshot) throw new Error('no snapshot sent');
     return snapshot;
@@ -860,7 +860,7 @@ describe('Snapshots', () => {
     start(h);
     h.clock.advance(1000);
     h.send({ type: 'pause' });
-    const snapshot = saved(h);
+    const snapshot = taken(h);
     expect(snapshot).toMatchObject({ purpose: 'export', generation: 15 });
 
     const resumed = harness();
@@ -874,7 +874,7 @@ describe('Snapshots', () => {
   it('bring back the Rule and Mutation settings of the run', () => {
     const h = harness();
     start(h, 15, false, { ...SOUP, rule: LIFE_WITHOUT_DEATH, mutation: { rate: 0.2, magnitude: 90 } });
-    const snapshot = saved(h).snapshot;
+    const snapshot = taken(h).snapshot;
     const resumed = harness();
     resumed.send({ type: 'import', snapshot, link: null, source: 'snapshot', rate: 15, running: false });
     expect(resumed.persistence[0]).toEqual({ type: 'world', source: 'snapshot', rule: LIFE_WITHOUT_DEATH, mutation: { rate: 0.2, magnitude: 90 } });
@@ -884,7 +884,7 @@ describe('Snapshots', () => {
     const h = harness();
     start(h, 15, false, { ...SOUP, width: 32, height: 32, density: 0 });
     h.send({ type: 'paint', cells: [[3, 4], [4, 4], [5, 4]], genotype: [{ hue: 40, dominance: 2 }, { hue: 230, dominance: 0 }] });
-    const snapshot = saved(h);
+    const snapshot = taken(h);
     expect(snapshot.link).toBeNull();
     const resumed = harness();
     resumed.send({ type: 'import', snapshot: snapshot.snapshot, link: null, source: 'snapshot', rate: 15, running: false });
@@ -897,7 +897,7 @@ describe('Snapshots', () => {
     const h = harness();
     start(h, 15, false);
     h.send({ type: 'step' });
-    const snapshot = saved(h, 'autosave');
+    const snapshot = taken(h, 'autosave');
     expect(snapshot.purpose).toBe('autosave');
     expect(snapshot.link).toBe(links(h)[0]);
 
@@ -913,7 +913,7 @@ describe('Snapshots', () => {
     const h = harness();
     start(h);
     h.clock.advance(1000);
-    const snapshot = saved(h).snapshot;
+    const snapshot = taken(h).snapshot;
     const newer = snapshot.slice();
     newer[4] = 99;
     const corrupt = snapshot.slice(0, snapshot.length - 8);

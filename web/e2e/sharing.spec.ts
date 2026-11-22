@@ -29,7 +29,7 @@ test('an edited World points to Snapshot export instead of a share link', async 
   await dragRow(page, 80, 78, 82);
   await openSettings(page);
   await expect(settings.getByRole('textbox', { name: 'Share link' })).toHaveCount(0);
-  await expect(settings.getByTestId('no-share-link')).toHaveText(/Export a snapshot to keep or share it/);
+  await expect(settings.getByTestId('no-share-link')).toHaveText(/Export a snapshot to keep or share this world/);
   await expect(settings.getByRole('button', { name: 'Export snapshot' })).toBeVisible();
 });
 
@@ -75,7 +75,7 @@ test('a bad share link in the address explains itself and opens a fresh Soup', a
   expect((await stats(page)).population).toBeGreaterThan(0);
 });
 
-test('the World is autosaved and restored on reload, still shareable', async ({ page }) => {
+test('the World is autosaved and restored on reload, still shareable', async ({ page, browser }) => {
   await page.goto('./');
   const speed = page.getByRole('button', { name: /^Speed/ });
   await speed.click({ modifiers: ['Shift'] });
@@ -87,12 +87,23 @@ test('the World is autosaved and restored on reload, still shareable', async ({ 
   const saved = await stats(page);
   expect(saved.generation).toBeGreaterThan(100);
   const url = await shareLink(page);
+  const before = await exportSnapshot(page);
   await page.waitForTimeout(AUTOSAVE_MS + 1000);
 
   await page.reload();
   await expect.poll(async () => (await stats(page)).population).toBeGreaterThan(0);
-  expect((await stats(page)).generation).toBeGreaterThanOrEqual(saved.generation);
+  await page.getByRole('button', { name: 'Pause' }).click();
+  await page.waitForTimeout(300);
+  const restored = await stats(page);
+  expect(restored.generation).toBeGreaterThanOrEqual(saved.generation);
   expect(await shareLink(page)).toBe(url);
+
+  const other = await (await browser.newContext()).newPage();
+  await openPausedAt(other, './');
+  await importSnapshot(other, before.bytes);
+  await expect.poll(() => stats(other)).toEqual(saved);
+  await stepTo(other, restored.generation);
+  expect((await exportSnapshot(other)).bytes.equals((await exportSnapshot(page)).bytes)).toBe(true);
 });
 
 test('an unreadable autosave falls back to a fresh Soup', async ({ page }) => {
