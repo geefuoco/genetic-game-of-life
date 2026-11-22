@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { alleleLines, byHue, chartX, chartY, CHART_INSET, describeLine, lineAt, lineage, type AlleleLine, type ChartLayout } from './lib/alleleTree.ts';
+  import { alleleLines, byHue, chartX, chartY, CHART_INSET, describeLine, lineAt, lineage, readerIndex, type AlleleLine, type ChartLayout } from './lib/alleleTree.ts';
   import { capitalised } from './lib/colours.ts';
   import { paletteCss } from './lib/palette.ts';
   import type { AlleleId, Census } from './protocol.ts';
@@ -25,21 +25,22 @@
   let canvas: HTMLCanvasElement;
   let width = $state(0);
   let hovered = $state<{ id: AlleleId; x: number; y: number } | null>(null);
-  /** The Allele the keyboard reader is on, while it has focus. */
-  let reading = $state<AlleleId | null>(null);
+  /** The line the keyboard reader last moved to, while it has focus. */
+  let reading = $state<AlleleLine | null>(null);
 
   const drawn = $derived(alleleLines(census));
   const order = $derived(byHue(drawn));
   const layout = $derived<ChartLayout>({ width, height, generation: census.generation });
   const byId = $derived(new Map(drawn.map((line) => [line.id, line])));
-  const readIndex = $derived(Math.max(0, order.findIndex((line) => line.id === reading)));
+  const readIndex = $derived(readerIndex(order, reading));
+  /** The line the keyboard reader is on now, which differs from `reading` once that line's Allele is pruned. */
+  const read = $derived(reading === null ? undefined : order[readIndex]);
   const tip = $derived.by(() => {
     if (hovered) {
       const line = byId.get(hovered.id);
       return line ? { line, x: hovered.x, y: hovered.y } : null;
     }
-    const line = reading === null ? undefined : byId.get(reading);
-    return line ? { line, x: chartX(layout, line.lastCarried), y: chartY(layout, line.hue) } : null;
+    return read ? { line: read, x: chartX(layout, read.lastCarried), y: chartY(layout, read.hue) } : null;
   });
   const counts = $derived({
     living: drawn.filter((line) => line.status === 'living').length,
@@ -64,7 +65,7 @@
   }
 
   $effect(() => {
-    draw(canvas, layout, drawn, highlighted, hovered?.id ?? reading);
+    draw(canvas, layout, drawn, highlighted, hovered?.id ?? read?.id ?? null);
   });
 
   /** Draws every line, emphasising the highlighted Allele's lineage, or else the major lines, and the line pointed at. */
@@ -188,8 +189,8 @@
         aria-label="Colour gene lineages, by hue"
         aria-valuetext={order[readIndex] ? spoken(order[readIndex]) : ''}
         aria-describedby="{id}-keys"
-        oninput={(event) => (reading = order[Number(event.currentTarget.value)]?.id ?? null)}
-        onfocus={() => (reading ??= order[readIndex]?.id ?? null)}
+        oninput={(event) => (reading = order[Number(event.currentTarget.value)] ?? null)}
+        onfocus={() => (reading ??= order[readIndex] ?? null)}
         onblur={() => (reading = null)}
         onkeydown={onreaderkeydown}
       />
