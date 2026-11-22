@@ -6,6 +6,7 @@
     openingCamera,
     worldWindow,
     panBy,
+    pinch,
     resizeViewport,
     screenToCell,
     zoomAt,
@@ -64,6 +65,10 @@
   let brushAt: Point | null = null;
   let editing = false;
   let grabbing = $state(false);
+  /** Where each finger or pointer pressed on the World is, relative to the canvas. */
+  let pointers: { id: number; at: Point }[] = [];
+  /** Whether two fingers have pinched since the last time none was down, so the fingers left neither pan, edit nor inspect. */
+  let pinching = false;
 
   /** Shows `frame` from the next animation frame on. */
   export function present(frame: Frame): void {
@@ -119,9 +124,29 @@
     return screenToCell(camera, world, { x: event.clientX - bounds.left, y: event.clientY - bounds.top });
   }
 
+  function canvasPoint(event: PointerEvent): Point {
+    const bounds = canvas.getBoundingClientRect();
+    return { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
+  }
+
+  /** The two fingers of a pinch, in the order they were pressed. */
+  function pinchPoints(): [Point, Point] | null {
+    const [a, b] = pointers;
+    return a && b ? [a.at, b.at] : null;
+  }
+
+  function pressed(event: PointerEvent): { id: number; at: Point } | undefined {
+    return pointers.find((pointer) => pointer.id === event.pointerId);
+  }
+
   function onpointerdown(event: PointerEvent): void {
-    if (event.button !== 0) return;
+    if (event.button !== 0 || pinching || pointers.length >= 2) return;
+    pointers.push({ id: event.pointerId, at: canvasPoint(event) });
     canvas.setPointerCapture(event.pointerId);
+    if (pointers.length === 2) {
+      startPinch();
+      return;
+    }
     if (tool === 'look') {
       drag = { x: event.clientX, y: event.clientY };
       pressedAt = drag;
@@ -139,7 +164,25 @@
     onstroke(cellsAlong(at, at, world));
   }
 
+  /** Turns the press under way into a pinch, closing any edit stroke it began. */
+  function startPinch(): void {
+    pinching = true;
+    endGesture();
+  }
+
   function onpointermove(event: PointerEvent): void {
+    const pointer = pressed(event);
+    if (!pointer) return;
+    const from = pinchPoints();
+    pointer.at = canvasPoint(event);
+    if (pinching) {
+      const to = pinchPoints();
+      if (from && to && camera && world) {
+        camera = pinch(camera, world, viewport, from, to);
+        dirty = true;
+      }
+      return;
+    }
     if (brushAt && world) {
       const at = cellAt(event);
       if (!at) return;
@@ -156,18 +199,26 @@
   }
 
   function onpointerup(event: PointerEvent): void {
+    if (!pressed(event)) return;
     if (pressedAt && camera && world) {
-      const bounds = canvas.getBoundingClientRect();
-      const point = { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
+      const point = canvasPoint(event);
       const shown = worldWindow(camera, world, viewport);
       const inside = point.x >= shown.x && point.y >= shown.y && point.x < shown.x + shown.width && point.y < shown.y + shown.height;
       const at = screenToCell(camera, world, point);
       oninspect(inside ? [Math.floor(at.x), Math.floor(at.y)] : null);
     }
-    endDrag();
+    lift(event);
   }
 
-  function endDrag(): void {
+  /** Forgets a finger or pointer that has lifted or been cancelled, ending the gesture with it. */
+  function lift(event: PointerEvent): void {
+    if (!pressed(event)) return;
+    pointers = pointers.filter((pointer) => pointer.id !== event.pointerId);
+    if (pointers.length === 0) pinching = false;
+    endGesture();
+  }
+
+  function endGesture(): void {
     drag = null;
     pressedAt = null;
     grabbing = false;
@@ -221,7 +272,7 @@
   {onpointerdown}
   {onpointermove}
   {onpointerup}
-  onpointercancel={endDrag}
+  onpointercancel={lift}
 ></canvas>
 {#if anchor}
   {@const pad = Math.max(3, Math.round(anchor.width * 0.3))}

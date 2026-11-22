@@ -158,6 +158,20 @@ test('keyboard shortcuts play, pause, step, change speed and dock', async ({ pag
   await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible();
 });
 
+test('shortcuts type into a text field instead of acting', async ({ page }) => {
+  await open(page);
+  await page.getByRole('button', { name: 'Settings' }).click();
+  const seed = page.getByRole('dialog', { name: 'Settings' }).getByRole('textbox', { name: 'Seed' });
+  await seed.fill('');
+  await seed.pressSequentially('1 .d[]');
+  await expect(seed).toHaveValue('1 .d[]');
+  await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^Speed/ })).toHaveText('1×');
+  await expect(page.getByRole('button', { name: 'Dock the controls to the side' })).toBeVisible();
+  const before = await generation(page);
+  await expect.poll(() => generation(page)).toBeGreaterThan(before + 2);
+});
+
 test('Space plays or pauses even while a dock button has focus', async ({ page }) => {
   await open(page);
   await page.getByRole('button', { name: 'Step one generation' }).focus();

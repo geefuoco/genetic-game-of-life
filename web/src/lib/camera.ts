@@ -89,6 +89,27 @@ export function panBy(camera: Camera, world: Size, dx: number, dy: number): Came
   return wrapped(camera.scale, camera.x + dx, camera.y + dy, world);
 }
 
+/**
+ * Follows two fingers moving from `from` to `to`: zooms by how much further
+ * apart they are, within the zoom limits, and moves the World so the point
+ * that was midway between them stays midway between them.
+ */
+export function pinch(camera: Camera, world: Size, viewport: Size, from: readonly [Point, Point], to: readonly [Point, Point]): Camera {
+  const start = midpoint(from);
+  const end = midpoint(to);
+  const spread = distance(from);
+  const factor = spread > 0 ? distance(to) / spread : 1;
+  return zoomAt(panBy(camera, world, end.x - start.x, end.y - start.y), world, viewport, factor, end);
+}
+
+function midpoint([a, b]: readonly [Point, Point]): Point {
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+}
+
+function distance([a, b]: readonly [Point, Point]): number {
+  return Math.hypot(b.x - a.x, b.y - a.y);
+}
+
 /** Follows a viewport resize, keeping the middle of the view in place and the zoom within its limits. */
 export function resizeViewport(camera: Camera, world: Size, from: Size, to: Size): Camera {
   const moved = panBy(camera, world, (to.width - from.width) / 2, (to.height - from.height) / 2);
