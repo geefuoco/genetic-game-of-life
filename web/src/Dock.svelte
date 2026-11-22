@@ -1,10 +1,19 @@
+<script lang="ts" module>
+  /**
+   * Where the controls are: floating over the World, docked to the side
+   * panel, in the drawer that holds the side panel on narrow screens, or in
+   * the small bar that opens that drawer and holds only the run controls.
+   */
+  export type DockLayout = 'floating' | 'docked' | 'drawer' | 'bar';
+</script>
+
 <script lang="ts">
   import type { Tool } from './lib/brush.ts';
 
   interface Props {
     running: boolean;
     speed: string;
-    docked: boolean;
+    layout: DockLayout;
     settingsOpen: boolean;
     /** Whether the floating Lineage card is open. */
     lineageOpen: boolean;
@@ -22,6 +31,7 @@
     onslower: () => void;
     onzoomin: () => void;
     onzoomout: () => void;
+    /** Called to move the controls: dock or float them, or open or close the drawer. */
     ontoggledock: () => void;
     ontogglesettings: () => void;
     ontogglelineage: () => void;
@@ -30,7 +40,7 @@
   let {
     running,
     speed,
-    docked,
+    layout,
     settingsOpen,
     lineageOpen,
     tool,
@@ -51,6 +61,15 @@
     ontogglelineage,
   }: Props = $props();
 
+  /** The name and tooltip of the button that moves the controls, in each layout. */
+  const PLACEMENT: Record<DockLayout, { label: string; title: string }> = {
+    floating: { label: 'Dock the controls to the side', title: 'Dock the controls to the side (D)' },
+    docked: { label: 'Float the controls', title: 'Float the controls (D)' },
+    drawer: { label: 'Close the controls', title: 'Close the controls (Esc)' },
+    bar: { label: 'Open the controls', title: 'Open the controls (D)' },
+  };
+
+  const inPanel = $derived(layout === 'docked' || layout === 'drawer');
   const carrierDot = $derived(`linear-gradient(90deg, ${brushColours[0]} 50%, ${brushColours[1]} 50%)`);
 
   let dockToggle: HTMLButtonElement;
@@ -61,7 +80,7 @@
     settingsToggle?.focus();
   }
 
-  /** Moves focus to the dock toggle, which is recreated whenever the dock moves. */
+  /** Moves focus to the button that moves the controls, which is recreated whenever they move. */
   export function focusDockToggle(): void {
     dockToggle.focus();
   }
@@ -77,7 +96,7 @@
   }
 </script>
 
-<div class="dock" class:glass={!docked} class:docked role="group" aria-label="Simulation controls">
+<div class="dock" class:glass={!inPanel} class:in-panel={inPanel} role="group" aria-label="Simulation controls">
   <div class="group run">
     <button type="button" aria-label={running ? 'Pause' : 'Play'} title={running ? 'Pause (Space)' : 'Play (Space)'} onclick={ontoggleplay}>
       {#if running}
@@ -102,65 +121,67 @@
       oncontextmenu={onSpeedMenu}>{speed}</button
     >
   </div>
-  <span class="sep" aria-hidden="true"></span>
-  <div class="group" role="group" aria-label="Tools">
-    <button type="button" aria-label="Look" title="Look: drag to move, click a cell to inspect" aria-pressed={tool === 'look'} class:on={tool === 'look'} onclick={() => ontool('look')}>
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
-        ><path d="M8 1.5v13M1.5 8h13M6 3.5l2-2 2 2M6 12.5l2 2 2-2M3.5 6l-2 2 2 2M12.5 6l2 2-2 2" /></svg
+  {#if layout !== 'bar'}
+    <span class="sep" aria-hidden="true"></span>
+    <div class="group" role="group" aria-label="Tools">
+      <button type="button" aria-label="Look" title="Look: drag to move, click a cell to inspect" aria-pressed={tool === 'look'} class:on={tool === 'look'} onclick={() => ontool('look')}>
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+          ><path d="M8 1.5v13M1.5 8h13M6 3.5l2-2 2 2M6 12.5l2 2 2-2M3.5 6l-2 2 2 2M12.5 6l2 2-2 2" /></svg
+        >
+      </button>
+      <button type="button" aria-label="Paint" title="Paint: drag to paint cells" aria-pressed={tool === 'paint'} class:on={tool === 'paint'} onclick={() => ontool('paint')}>
+        <span class="dot" style:background={brushColours[0]} aria-hidden="true"></span>
+      </button>
+      <button
+        type="button"
+        aria-label="Carrier brush"
+        title="Carrier brush: drag to paint cells carrying both brush colours"
+        aria-pressed={tool === 'carrier'}
+        class:on={tool === 'carrier'}
+        onclick={() => ontool('carrier')}
       >
-    </button>
-    <button type="button" aria-label="Paint" title="Paint: drag to paint cells" aria-pressed={tool === 'paint'} class:on={tool === 'paint'} onclick={() => ontool('paint')}>
-      <span class="dot" style:background={brushColours[0]} aria-hidden="true"></span>
-    </button>
-    <button
-      type="button"
-      aria-label="Carrier brush"
-      title="Carrier brush: drag to paint cells carrying both brush colours"
-      aria-pressed={tool === 'carrier'}
-      class:on={tool === 'carrier'}
-      onclick={() => ontool('carrier')}
-    >
-      <span class="dot" style:background={carrierDot} aria-hidden="true"></span>
-    </button>
-    <button type="button" aria-label="Erase" title="Erase: drag to erase cells" aria-pressed={tool === 'erase'} class:on={tool === 'erase'} onclick={() => ontool('erase')}>
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"
-        ><path d="M9.5 2.5l4 4-6.5 6.5H4.5l-2-2z" /><path d="M6 6l4 4M7 13h6.5" stroke-linecap="round" /></svg
-      >
-    </button>
-    <button type="button" aria-label="Stamp a pattern" title="Stamp: click to stamp the chosen pattern" aria-pressed={tool === 'stamp'} class:on={tool === 'stamp'} onclick={() => ontool('stamp')}>
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"
-        ><rect x="6.5" y="2" width="3" height="3" rx="0.8" /><rect x="11" y="6.5" width="3" height="3" rx="0.8" /><rect x="2" y="11" width="3" height="3" rx="0.8" /><rect
-          x="6.5"
-          y="11"
-          width="3"
-          height="3"
-          rx="0.8"
-        /><rect x="11" y="11" width="3" height="3" rx="0.8" /></svg
-      >
-    </button>
-    <button type="button" aria-label="Undo" title="Undo (Ctrl+Z)" disabled={!canUndo} onclick={onundo}>
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
-        ><path d="M5.5 3L2.5 6l3 3" /><path d="M2.5 6h7a4 4 0 010 8H7" /></svg
-      >
-    </button>
-    <button type="button" aria-label="Redo" title="Redo (Ctrl+Shift+Z)" disabled={!canRedo} onclick={onredo}>
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
-        ><path d="M10.5 3l3 3-3 3" /><path d="M13.5 6h-7a4 4 0 000 8H9" /></svg
-      >
-    </button>
-  </div>
+        <span class="dot" style:background={carrierDot} aria-hidden="true"></span>
+      </button>
+      <button type="button" aria-label="Erase" title="Erase: drag to erase cells" aria-pressed={tool === 'erase'} class:on={tool === 'erase'} onclick={() => ontool('erase')}>
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"
+          ><path d="M9.5 2.5l4 4-6.5 6.5H4.5l-2-2z" /><path d="M6 6l4 4M7 13h6.5" stroke-linecap="round" /></svg
+        >
+      </button>
+      <button type="button" aria-label="Stamp a pattern" title="Stamp: click to stamp the chosen pattern" aria-pressed={tool === 'stamp'} class:on={tool === 'stamp'} onclick={() => ontool('stamp')}>
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"
+          ><rect x="6.5" y="2" width="3" height="3" rx="0.8" /><rect x="11" y="6.5" width="3" height="3" rx="0.8" /><rect x="2" y="11" width="3" height="3" rx="0.8" /><rect
+            x="6.5"
+            y="11"
+            width="3"
+            height="3"
+            rx="0.8"
+          /><rect x="11" y="11" width="3" height="3" rx="0.8" /></svg
+        >
+      </button>
+      <button type="button" aria-label="Undo" title="Undo (Ctrl+Z)" disabled={!canUndo} onclick={onundo}>
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+          ><path d="M5.5 3L2.5 6l3 3" /><path d="M2.5 6h7a4 4 0 010 8H7" /></svg
+        >
+      </button>
+      <button type="button" aria-label="Redo" title="Redo (Ctrl+Shift+Z)" disabled={!canRedo} onclick={onredo}>
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+          ><path d="M10.5 3l3 3-3 3" /><path d="M13.5 6h-7a4 4 0 000 8H9" /></svg
+        >
+      </button>
+    </div>
+    <span class="sep" aria-hidden="true"></span>
+    <div class="group">
+      <button type="button" aria-label="Zoom out" title="Zoom out" onclick={onzoomout}>
+        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M3 8h10" /></svg>
+      </button>
+      <button type="button" aria-label="Zoom in" title="Zoom in" onclick={onzoomin}>
+        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 3v10M3 8h10" /></svg>
+      </button>
+    </div>
+  {/if}
   <span class="sep" aria-hidden="true"></span>
   <div class="group">
-    <button type="button" aria-label="Zoom out" title="Zoom out" onclick={onzoomout}>
-      <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M3 8h10" /></svg>
-    </button>
-    <button type="button" aria-label="Zoom in" title="Zoom in" onclick={onzoomin}>
-      <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 3v10M3 8h10" /></svg>
-    </button>
-  </div>
-  <span class="sep" aria-hidden="true"></span>
-  <div class="group">
-    {#if !docked}
+    {#if layout === 'floating'}
       <button
         type="button"
         class:on={lineageOpen}
@@ -194,11 +215,20 @@
     <button
       type="button"
       bind:this={dockToggle}
-      aria-label={docked ? 'Float the controls' : 'Dock the controls to the side'}
-      title={docked ? 'Float the controls (D)' : 'Dock the controls to the side (D)'}
+      aria-label={PLACEMENT[layout].label}
+      title={PLACEMENT[layout].title}
+      aria-controls={layout === 'bar' ? 'side-panel' : undefined}
       onclick={ontoggledock}
     >
-      {#if docked}
+      {#if layout === 'bar'}
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"
+          ><path d="M2.5 4h11M2.5 8h11M2.5 12h11" /></svg
+        >
+      {:else if layout === 'drawer'}
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"
+          ><path d="M4 4l8 8M12 4l-8 8" /></svg
+        >
+      {:else if layout === 'docked'}
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"
           ><rect x="2" y="3" width="12" height="10" rx="2" /><path d="M5.5 10.5h5" /></svg
         >
@@ -274,17 +304,17 @@
     background: rgb(255 255 255 / 8%);
   }
 
-  .docked {
+  .in-panel {
     flex-wrap: wrap;
     row-gap: 4px;
     background: rgb(255 255 255 / 3%);
   }
 
-  .docked .sep {
+  .in-panel .sep {
     display: none;
   }
 
-  .docked .run {
+  .in-panel .run {
     flex-basis: 100%;
   }
 </style>

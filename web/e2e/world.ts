@@ -4,11 +4,12 @@ import { stats } from './stats.ts';
 /**
  * The opening view: the 160 by 160 World at 9 px per Cell, with the top
  * left of Cell (80, 80) at the middle of the stage. The stage fills the
- * 1440 by 900 viewport, less the 340 px side panel when docked.
+ * 1440 by 900 viewport, less the 340 px side panel when docked, or the
+ * whole 412 by 839 screen of the phone, where the drawer opens over it.
  */
 const SCALE = 9;
-type Layout = 'floating' | 'docked';
-const STAGE_MIDDLE: Record<Layout, { x: number; y: number }> = { floating: { x: 720, y: 450 }, docked: { x: 550, y: 450 } };
+type Layout = 'floating' | 'docked' | 'phone';
+const STAGE_MIDDLE: Record<Layout, { x: number; y: number }> = { floating: { x: 720, y: 450 }, docked: { x: 550, y: 450 }, phone: { x: 206, y: 419.5 } };
 
 export function centreOf(x: number, y: number, layout: Layout = 'floating'): { x: number; y: number } {
   const middle = STAGE_MIDDLE[layout];

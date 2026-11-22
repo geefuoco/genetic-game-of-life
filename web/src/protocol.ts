@@ -128,8 +128,8 @@ export interface Pedigree {
 /** The Patterns the core's library can stamp, by the core's names. */
 export type PatternName = 'glider' | 'lwss' | 'r-pentomino' | 'gosper-gun';
 
-/** Generations per second, or `'max'` for as fast as the worker can go. */
-export type Rate = number | 'max';
+/** Generations per second. */
+export type Rate = number;
 
 /**
  * Where a World came from: a new Soup, a Share Link, a Snapshot file the visitor imported, or the Snapshot autosaved in

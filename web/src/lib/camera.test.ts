@@ -4,6 +4,7 @@ import {
   minScale,
   openingCamera,
   panBy,
+  pinch,
   resizeViewport,
   screenToCell,
   worldWindow,
@@ -83,6 +84,36 @@ describe('pan', () => {
     const camera = panBy(openingCamera(soup, viewport), soup, 0, 0);
     const leftOfCentre = screenToCell(camera, soup, { x: centre.x - 80 * 9 - 4.5, y: centre.y });
     expect(leftOfCentre.x).toBeCloseTo(159.5, 6);
+  });
+});
+
+describe('pinch', () => {
+  it('zooms by how far the fingers spread and keeps the Cell between them under them as they move', () => {
+    const before = openingCamera(soup, viewport);
+    const after = pinch(before, soup, viewport, [{ x: 600, y: 400 }, { x: 700, y: 400 }], [{ x: 520, y: 500 }, { x: 720, y: 500 }]);
+    expect(after.scale).toBeCloseTo(18, 9);
+    expectSameCell(screenToCell(after, soup, { x: 620, y: 500 }), screenToCell(before, soup, { x: 650, y: 400 }));
+  });
+
+  it('stops at the zoom-in limit and still keeps the Cell between the fingers under them', () => {
+    const before = openingCamera(soup, viewport);
+    const after = pinch(before, soup, viewport, [{ x: 700, y: 450 }, { x: 710, y: 450 }], [{ x: 200, y: 450 }, { x: 1200, y: 450 }]);
+    expect(after.scale).toBe(MAX_SCALE);
+    expectSameCell(screenToCell(after, soup, { x: 700, y: 450 }), screenToCell(before, soup, { x: 705, y: 450 }));
+  });
+
+  it('wraps across the torus while the fingers drag the World', () => {
+    const before = openingCamera(soup, viewport);
+    const after = pinch(before, soup, viewport, [{ x: 100, y: 100 }, { x: 200, y: 100 }], [{ x: 100 + 160 * 9 * 2 + 30, y: 100 }, { x: 200 + 160 * 9 * 2 + 30, y: 100 }]);
+    expect(after.scale).toBeCloseTo(9, 9);
+    expectSameCell(screenToCell(after, soup, { x: 180, y: 100 }), screenToCell(before, soup, { x: 150, y: 100 }));
+  });
+
+  it('only pans while both fingers are at one point', () => {
+    const before = openingCamera(soup, viewport);
+    const after = pinch(before, soup, viewport, [{ x: 300, y: 300 }, { x: 300, y: 300 }], [{ x: 340, y: 300 }, { x: 360, y: 300 }]);
+    expect(after.scale).toBe(9);
+    expectSameCell(screenToCell(after, soup, { x: 350, y: 300 }), screenToCell(before, soup, { x: 300, y: 300 }));
   });
 });
 

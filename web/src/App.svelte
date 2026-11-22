@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
+  import { MediaQuery } from 'svelte/reactivity';
   import AlleleTree from './AlleleTree.svelte';
   import Brush from './Brush.svelte';
-  import Dock from './Dock.svelte';
+  import Dock, { type DockLayout } from './Dock.svelte';
   import HighlightPill from './HighlightPill.svelte';
   import Inspector from './Inspector.svelte';
   import Notice from './Notice.svelte';
@@ -36,10 +37,23 @@
   const HINT_MS = 9000;
   /** Zoom factor of one press of a zoom button. */
   const ZOOM_STEP = 1.25;
+  /** Viewports at most this wide, in CSS pixels, keep the controls in a drawer. */
+  const NARROW_PX = 640;
   /** What a visitor is told once a Snapshot they chose is running. */
   const IMPORTED = "Snapshot imported. Ancestors restart from here: a snapshot doesn't keep the ones before it.";
 
   let docked = $state(loadDocked(browserStorage()));
+  const narrowViewport = new MediaQuery(`max-width: ${NARROW_PX}px`);
+  const touchScreen = new MediaQuery('pointer: coarse');
+  /** Whether the controls drawer is open, on a viewport narrow enough to have one. */
+  let drawerOpen = $state(false);
+  const narrow = $derived(narrowViewport.current);
+  /** Whether the side panel is showing: docked beside the World, or as the drawer over it on narrow viewports. */
+  const panelOpen = $derived(narrow ? drawerOpen : docked);
+  /** Whether the controls float over the World, with the Lineage card and settings popover they open. */
+  const floating = $derived(!narrow && !docked);
+  /** Whether the side panel sits beside the World rather than over it. */
+  const sideways = $derived(docked && !narrow);
   let running = $state(true);
   let speed = $state(DEFAULT_SPEED);
   let generation = $state(0);
@@ -78,7 +92,8 @@
   });
   let supported = false;
   let view: WorldView;
-  let dock: Dock;
+  /** The controls, of which only one set is shown at a time. */
+  let dock: Dock | undefined = $state();
   let popover: HTMLElement | undefined = $state();
   let simulation: Simulation | null = null;
   const worldStore = browserWorldStore();
@@ -92,6 +107,7 @@
   let shareLink = $state<string | null>(null);
   let notice = $state.raw<{ kind: 'info' | 'error'; text: string } | null>(null);
 
+  const hint = $derived(touchScreen.current ? 'tap a cell to see its colour genes · drag to move · pinch to zoom' : 'click a cell to see its colour genes · drag to move · scroll to zoom');
   const stats = $derived(`gen ${generation.toLocaleString()} · ${population.toLocaleString()} alive`);
   const brushColours = $derived([paletteCss(brush.first.hue), paletteCss(brush.second.hue)] as const);
   const inspected = $derived(inspection && { x: inspection.x, y: inspection.y, dead: inspection.deathGeneration !== null });
@@ -286,34 +302,48 @@
   async function closeSettings(): Promise<void> {
     settingsOpen = false;
     await tick();
-    dock.focusSettingsToggle();
+    dock?.focusSettingsToggle();
   }
 
+  /**
+   * Docks or floats the controls, or on a narrow viewport opens or closes
+   * the drawer. Focus follows a drawer, so it is never left behind in one
+   * that has closed.
+   */
   async function toggleDock(refocus: boolean): Promise<void> {
-    docked = !docked;
-    saveDocked(browserStorage(), docked);
-    watchCensus();
-    if (refocus) {
+    if (narrow) {
+      drawerOpen = !drawerOpen;
+    } else {
+      docked = !docked;
+      saveDocked(browserStorage(), docked);
+    }
+    if (refocus || narrow) {
       await tick();
-      dock.focusDockToggle();
+      dock?.focusDockToggle();
     }
   }
 
   function toggleLineage(): void {
     lineageOpen = !lineageOpen;
-    watchCensus();
   }
 
   /** Whether the side panel or the Lineage card shows the census. */
-  function censusShown(): boolean {
-    return docked || lineageOpen;
-  }
+  const censusShown = $derived(panelOpen || (floating && lineageOpen));
 
   /** Asks for census events only while the side panel or the Lineage card shows them. */
-  function watchCensus(): void {
-    if (!censusShown()) census = null;
-    simulation?.send({ type: 'watch-census', watching: censusShown() });
+  function watchCensus(watching: boolean): void {
+    if (!watching) census = null;
+    simulation?.send({ type: 'watch-census', watching });
   }
+
+  $effect(() => {
+    watchCensus(censusShown);
+  });
+
+  /** Closes the drawer once the viewport is wide enough not to need one, so it does not reopen on its own when the viewport narrows again. */
+  $effect(() => {
+    if (!narrow) drawerOpen = false;
+  });
 
   function isEditable(target: EventTarget | null): boolean {
     return target instanceof Element && target.closest('input, textarea, select, [contenteditable]') !== null;
@@ -338,9 +368,15 @@
   }
 
   function onkeydown(event: KeyboardEvent): void {
-    if (event.key === 'Escape' && settingsOpen && !docked) {
+    if (event.key === 'Escape' && settingsOpen && floating) {
       event.preventDefault();
       void closeSettings();
+      return;
+    }
+    if (event.key === 'Escape' && isTyping(event.target)) return;
+    if (event.key === 'Escape' && narrow && drawerOpen) {
+      event.preventDefault();
+      void toggleDock(true);
       return;
     }
     if (event.key === 'Escape' && inspection) {
@@ -378,7 +414,7 @@
     simulation = new Simulation({
       frame: onFrame,
       census: (next) => {
-        if (censusShown()) census = next;
+        if (censusShown) census = next;
       },
       rule: (running) => {
         rule = { running, rejected: null };
@@ -407,8 +443,8 @@
       clearAddressLink();
       openNext();
     });
-    watchCensus();
-    const hint = setTimeout(() => {
+    watchCensus(censusShown);
+    const hintTimer = setTimeout(() => {
       hintShown = false;
     }, HINT_MS);
     const autosaving = setInterval(autosave, AUTOSAVE_MS);
@@ -421,7 +457,7 @@
     window.addEventListener('hashchange', onHashChange);
     document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
-      clearTimeout(hint);
+      clearTimeout(hintTimer);
       clearInterval(autosaving);
       window.removeEventListener('hashchange', onHashChange);
       document.removeEventListener('visibilitychange', onVisibilityChange);
@@ -433,12 +469,12 @@
 
 <svelte:window {onkeydown} {onkeyup} />
 
-{#snippet controls()}
+{#snippet controls(layout: DockLayout)}
   <Dock
     bind:this={dock}
     {running}
     speed={SPEEDS[speed]!.label}
-    {docked}
+    {layout}
     {settingsOpen}
     {lineageOpen}
     {tool}
@@ -486,7 +522,7 @@
   <p class="problem" role="alert">{problem}</p>
 {/if}
 
-<div class="app" class:docked hidden={problem !== null}>
+<div class="app" class:docked={sideways} class:narrow hidden={problem !== null}>
   <main class="stage" bind:clientWidth={stageWidth} bind:clientHeight={stageHeight}>
     <WorldView
       bind:this={view}
@@ -521,29 +557,32 @@
     {#if highlighted}
       <HighlightPill hue={highlighted.hue} counts={highlightCounts} onclear={() => highlight(null)} />
     {/if}
-    <header class="wordmark" aria-hidden={docked}>
+    <header class="wordmark" aria-hidden={sideways}>
       <h1>genetic life</h1>
       <p data-testid="stats">{stats}</p>
     </header>
-    <p class="hint" class:gone={!hintShown}>click a cell to see its colour genes · drag to move · scroll to zoom</p>
-    {#if !docked}
+    <p class="hint" class:gone={!hintShown}>{hint}</p>
+    {#if narrow && !drawerOpen}
+      <div class="floating">{@render controls('bar')}</div>
+    {/if}
+    {#if floating}
       {#if lineageOpen}
         <div class="lineage-card glass" id="lineage-card">{@render lineage(210)}</div>
       {/if}
-      <div class="floating">{@render controls()}</div>
+      <div class="floating">{@render controls('floating')}</div>
       {#if settingsOpen}
         <div class="popover glass" id="settings-popover" role="dialog" aria-label="Settings" bind:this={popover}>{@render settings()}</div>
       {/if}
     {/if}
   </main>
-  <aside class="panel" aria-label="Side panel" hidden={!docked}>
+  <aside class="panel" class:drawer={narrow} id="side-panel" aria-label={narrow ? 'Controls drawer' : 'Side panel'} hidden={!panelOpen}>
     <div class="panel-inner">
       <header class="panel-head">
         <h2>genetic life</h2>
         <p>{stats}</p>
       </header>
-      {#if docked}
-        {@render controls()}
+      {#if panelOpen}
+        {@render controls(narrow ? 'drawer' : 'docked')}
         <Stats {generation} {population} {census} />
         {@render lineage(300)}
         <section class="panel-settings" aria-labelledby="panel-settings-title">
@@ -680,6 +719,45 @@
     height: 100%;
     padding: 22px 20px;
     overflow: auto;
+  }
+
+  .panel.drawer {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 10;
+    width: min(var(--panel-width), calc(100% - 40px));
+    box-shadow: -12px 0 40px rgb(0 0 0 / 45%);
+    animation: slide-in 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  .drawer .panel-inner {
+    width: 100%;
+  }
+
+  @keyframes slide-in {
+    from {
+      transform: translateX(100%);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .panel.drawer {
+      animation: none;
+    }
+  }
+
+  .narrow .hint {
+    top: 68px;
+    right: 26px;
+    left: 26px;
+    white-space: normal;
+    transform: none;
+  }
+
+  .narrow .floating {
+    bottom: max(16px, env(safe-area-inset-bottom));
   }
 
   .problem {
