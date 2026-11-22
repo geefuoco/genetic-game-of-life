@@ -72,13 +72,19 @@ interface Harness {
   cost: { msPerGeneration: number };
 }
 
+/** The buffers a frame lends the page. */
+interface Buffers {
+  phenotypes: Float32Array;
+  carriers: Uint8Array | null;
+}
+
 function harness(options: { keepUp?: boolean } = {}): Harness {
   const keepUp = options.keepUp ?? true;
   const clock = new FakeClock();
   const frames: Frame[] = [];
   const errors: string[] = [];
   const notices: Harness['notices'] = [];
-  const held: Float32Array[] = [];
+  const held: Buffers[] = [];
   const cost = { msPerGeneration: 0 };
   const createWorld = (soup: SoupSettings): EngineWorld => {
     const world = createWebWorld(soup);
@@ -106,6 +112,8 @@ function harness(options: { keepUp?: boolean } = {}): Harness {
       pedigree: (depth) => world.pedigree(depth),
       setPedigreeBudget: (bytes) => world.setPedigreeBudget(bytes),
       census: () => world.census(),
+      alleleTree: () => world.alleleTree(),
+      carryingCells: (allele, out) => world.carryingCells(allele, out),
       populationHistory: () => world.populationHistory(),
       free: () => world.free(),
     };
@@ -119,16 +127,18 @@ function harness(options: { keepUp?: boolean } = {}): Harness {
       notices.push(event);
       return;
     }
-    frames.push({ ...event, phenotypes: event.phenotypes.slice() });
-    if (keepUp) queueRelease(event.phenotypes);
-    else held.push(event.phenotypes);
+    const highlight = event.highlight && { ...event.highlight, carriers: event.highlight.carriers.slice() };
+    frames.push({ ...event, phenotypes: event.phenotypes.slice(), highlight });
+    const buffers: Buffers = { phenotypes: event.phenotypes, carriers: event.highlight?.carriers ?? null };
+    if (keepUp) queueRelease(buffers);
+    else held.push(buffers);
   };
-  const releases: Float32Array[] = [];
-  const queueRelease = (buffer: Float32Array): void => {
-    releases.push(buffer);
+  const releases: Buffers[] = [];
+  const queueRelease = (buffers: Buffers): void => {
+    releases.push(buffers);
     clock.setTimeout(() => {
       const next = releases.shift();
-      if (next) engine.handle({ type: 'release', phenotypes: next });
+      if (next) engine.handle({ type: 'release', ...next });
     }, 0);
   };
   const engine = new Engine({ createWorld, clock, send: onEvent });
@@ -140,7 +150,7 @@ function harness(options: { keepUp?: boolean } = {}): Harness {
     cost,
     send: (command) => engine.handle(command),
     releaseAll() {
-      for (const buffer of held.splice(0)) engine.handle({ type: 'release', phenotypes: buffer });
+      for (const buffers of held.splice(0)) engine.handle({ type: 'release', ...buffers });
     },
     latest() {
       const frame = frames.at(-1);
@@ -481,10 +491,22 @@ describe('inspecting', () => {
       deathGeneration: null,
       phenotype: 40,
       alleles: [
-        { ...JADE, shown: false, lineage: [{ ...JADE, origin: 1, status: 'hidden' }] },
-        { ...ORANGE, shown: true, lineage: [{ ...ORANGE, origin: 1, status: 'living' }] },
+        { ...JADE, id: expect.any(BigInt), shown: false, lineage: [{ ...JADE, origin: 1, status: 'hidden' }] },
+        { ...ORANGE, id: expect.any(BigInt), shown: true, lineage: [{ ...ORANGE, origin: 1, status: 'living' }] },
       ],
     });
+  });
+
+  it('identifies each inspected Allele as the census does', () => {
+    const h = harness();
+    start(h, 15, false, EMPTY);
+    h.send({ type: 'paint', cells: [[3, 4]], genotype: [JADE, ORANGE] });
+    h.send({ type: 'inspect', x: 3, y: 4 });
+    h.send({ type: 'watch-census', watching: true });
+    h.clock.advance(0);
+    const census = h.notices.filter((notice): notice is Census => notice.type === 'census').at(-1);
+    const ids = h.latest().inspection?.alleles.map((allele) => allele.id);
+    expect(ids).toEqual([JADE, ORANGE].map((allele) => census?.alleles.find((line) => line.hue === allele.hue)?.id));
   });
 
   it('stays with the inspected Organism through its death, not the next Organism Born in its Cell', () => {
@@ -521,6 +543,78 @@ describe('inspecting', () => {
   });
 });
 
+describe('Carrier highlight', () => {
+  const EMPTY: SoupSettings = { ...SOUP, width: 32, height: 32, density: 0, mutation: { rate: 0, magnitude: 0 } };
+  const ORANGE = { hue: 40, dominance: 2 };
+  const JADE = { hue: 160, dominance: 1 };
+  const at = (x: number, y: number): number => y * 32 + x;
+
+  /** A paused World of lone Cells, two orange Carriers hiding jade and one pure jade, and the id of jade. */
+  function lonelyJade(h: Harness): bigint {
+    start(h, 15, false, EMPTY);
+    h.send({ type: 'paint', cells: [[3, 4], [9, 9]], genotype: [JADE, ORANGE] });
+    h.send({ type: 'paint', cells: [[20, 20]], genotype: [JADE, JADE] });
+    h.send({ type: 'end-stroke' });
+    h.send({ type: 'watch-census', watching: true });
+    const census = h.notices.filter((notice): notice is Census => notice.type === 'census').at(-1);
+    const jade = census?.alleles.find((line) => line.hue === JADE.hue)?.id;
+    if (jade === undefined) throw new Error('jade is not in the census');
+    return jade;
+  }
+
+  it('marks, in each frame, the Cells that show the highlighted Allele and the Carriers that hide it', () => {
+    const h = harness();
+    const jade = lonelyJade(h);
+    h.send({ type: 'highlight', allele: jade });
+    h.clock.advance(0);
+    const highlight = h.latest().highlight;
+    expect(highlight).toMatchObject({ allele: jade, shown: 1, hidden: 2 });
+    const marked = [...(highlight?.carriers ?? [])].flatMap((mark, index) => (mark === 0 ? [] : [[index, mark]]));
+    expect(marked).toEqual([
+      [at(3, 4), 2],
+      [at(9, 9), 2],
+      [at(20, 20), 1],
+    ]);
+  });
+
+  it('follows the run', () => {
+    const h = harness();
+    const jade = lonelyJade(h);
+    h.send({ type: 'highlight', allele: jade });
+    h.send({ type: 'step' });
+    h.clock.advance(0);
+    const highlight = h.latest().highlight;
+    expect(highlight).toMatchObject({ allele: jade, shown: 0, hidden: 0 });
+    expect(highlight?.carriers.every((mark) => mark === 0)).toBe(true);
+  });
+
+  it('keeps marking while the page holds frames back and hands them back', () => {
+    const h = harness({ keepUp: false });
+    const jade = lonelyJade(h);
+    h.send({ type: 'highlight', allele: jade });
+    for (let i = 0; i < 5; i++) {
+      h.releaseAll();
+      h.send({ type: 'paint', cells: [[i, 30]], genotype: [JADE, JADE] });
+    }
+    h.releaseAll();
+    expect(h.errors).toEqual([]);
+    expect(h.latest().highlight).toMatchObject({ shown: 6, hidden: 2 });
+  });
+
+  it('ends when cleared, and in a new Soup', () => {
+    const h = harness();
+    const jade = lonelyJade(h);
+    h.send({ type: 'highlight', allele: jade });
+    h.send({ type: 'highlight', allele: null });
+    h.clock.advance(0);
+    expect(h.latest().highlight).toBeNull();
+
+    h.send({ type: 'highlight', allele: jade });
+    start(h, 15, false, EMPTY);
+    expect(h.latest().highlight).toBeNull();
+  });
+});
+
 describe('census', () => {
   const EMPTY: SoupSettings = { ...SOUP, width: 32, height: 32, density: 0, mutation: { rate: 0, magnitude: 0 } };
   const ORANGE = { hue: 40, dominance: 2 };
@@ -551,11 +645,51 @@ describe('census', () => {
       generation: 1,
       population: 3,
       alleles: [
-        { ...JADE, copies: 4, shown: 1, hidden: 2 },
-        { ...ORANGE, copies: 2, shown: 2, hidden: 0 },
+        { ...JADE, id: expect.any(BigInt), copies: 4, shown: 1, hidden: 2 },
+        { ...ORANGE, id: expect.any(BigInt), copies: 2, shown: 2, hidden: 0 },
       ],
+      tree: expect.any(Array),
       populationHistory: Uint32Array.of(0, 3),
     });
+  });
+
+  it('carries the Allele Tree: each Allele with its source, origin, when it was last carried and its status', () => {
+    const h = harness();
+    start(h, 15, false, EMPTY);
+    h.send({ type: 'step' });
+    h.send({ type: 'paint', cells: [[3, 4]], genotype: [JADE, ORANGE] });
+    h.send({ type: 'end-stroke' });
+    h.send({ type: 'step' });
+    h.send({ type: 'step' });
+    h.send({ type: 'paint', cells: [[9, 9]], genotype: [ORANGE, ORANGE] });
+    h.send({ type: 'watch-census', watching: true });
+    const { tree, alleles } = latestCensus(h);
+    expect(tree).toHaveLength(SOUP.foundingAlleles + 2);
+    const founding = tree.slice(0, SOUP.foundingAlleles);
+    expect(founding.every((node) => node.source === null && node.origin === 0 && node.lastCarried === 0 && node.status === 'extinct')).toBe(true);
+    expect(tree.slice(SOUP.foundingAlleles)).toEqual([
+      { ...JADE, id: expect.any(BigInt), source: null, origin: 1, lastCarried: 1, status: 'extinct' },
+      { ...ORANGE, id: alleles[0]?.id, source: null, origin: 1, lastCarried: 3, status: 'living' },
+    ]);
+  });
+
+  it('links each mutant in the Allele Tree to the Allele it mutated from', () => {
+    const h = harness();
+    start(h, 15, false, { ...SOUP, width: 48, height: 48, mutation: { rate: 0.2, magnitude: 30 } });
+    for (let i = 0; i < 20; i++) h.send({ type: 'step' });
+    h.send({ type: 'watch-census', watching: true });
+    const { tree, alleles, generation } = latestCensus(h);
+    const seen = new Set<bigint>();
+    for (const node of tree) {
+      if (node.source !== null) expect(seen).toContain(node.source);
+      expect(node.lastCarried).toBeGreaterThanOrEqual(node.origin);
+      expect(node.lastCarried).toBeLessThanOrEqual(generation);
+      seen.add(node.id);
+    }
+    expect(tree.some((node) => node.source !== null)).toBe(true);
+    const living = tree.filter((node) => node.status !== 'extinct');
+    expect(living.map((node) => node.id).sort()).toEqual(alleles.map((line) => line.id).sort());
+    expect(living.every((node) => node.lastCarried === generation)).toBe(true);
   });
 
   it('follows the run at most four times a second, and always ends on the latest Generation', () => {

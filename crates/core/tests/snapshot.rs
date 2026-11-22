@@ -27,17 +27,17 @@ fn notation(birth: u16, survival: u16) -> String {
 /// The Snapshot header: the marker and the little-endian format version.
 const HEADER: usize = 8;
 
-/// Byte offset of the PRNG algorithm version in a version 3 payload.
+/// Byte offset of the PRNG algorithm version in a version 4 payload.
 const RNG_VERSION_OFFSET: usize = 36;
 
 fn payload(snapshot: &[u8]) -> Vec<u8> {
     miniz_oxide::inflate::decompress_to_vec_zlib(&snapshot[HEADER..]).unwrap()
 }
 
-/// A version 3 Snapshot holding `payload`.
+/// A version 4 Snapshot holding `payload`.
 fn sealed(payload: &[u8]) -> Vec<u8> {
     let mut bytes = b"GGLS".to_vec();
-    bytes.extend(3u32.to_le_bytes());
+    bytes.extend(4u32.to_le_bytes());
     bytes.extend(miniz_oxide::deflate::compress_to_vec_zlib(payload, 6));
     bytes
 }
@@ -77,13 +77,14 @@ fn a_snapshot_is_compressed() {
 fn a_snapshot_starts_with_its_marker_and_format_version() {
     let bytes = soup(1).snapshot();
     assert_eq!(&bytes[..4], b"GGLS");
-    assert_eq!(bytes[4..HEADER], 3u32.to_le_bytes());
+    assert_eq!(bytes[4..HEADER], 4u32.to_le_bytes());
 }
 
-/// Version 2, which lacked Birth Generations, is no longer read.
+/// Version 3, which lacked when extinct Alleles were last carried, is no
+/// longer read.
 #[test]
 fn an_unknown_format_version_is_rejected() {
-    for version in [2, 4] {
+    for version in [3, 5] {
         let mut bytes = soup(2).snapshot();
         bytes[4..HEADER].copy_from_slice(&u32::to_le_bytes(version));
         let error = World::from_snapshot(&bytes).unwrap_err();
@@ -171,10 +172,11 @@ fn a_truncated_payload_is_rejected() {
 }
 
 /// One Allele Tree slot: its id version and, if retained, its hue,
-/// Dominance Level, source slot and origin Generation.
-type SlotSpec = (u32, Option<(f64, u8, Option<u32>, u64)>);
+/// Dominance Level, source slot, origin Generation and the Generation it was
+/// last carried in.
+type SlotSpec = (u32, Option<(f64, u8, Option<u32>, u64, u64)>);
 
-/// A version 3 payload built field by field from the documented layout,
+/// A version 4 payload built field by field from the documented layout,
 /// independently of the World's own encoder.
 #[derive(Clone)]
 struct Payload {
@@ -195,7 +197,8 @@ struct Payload {
 
 impl Payload {
     /// A 16x16 Conway World at Generation 1 with one Founding Allele, one
-    /// mutant of it, one freed slot and two live Cells.
+    /// mutant of it, one freed slot, an extinct Founding Allele last carried
+    /// in Generation 1, and two live Cells.
     fn valid() -> Self {
         Self {
             width: 16,
@@ -208,9 +211,10 @@ impl Payload {
             rng_version: 1,
             rng_state: 42,
             slots: vec![
-                (0, Some((10.0, 0, None, 0))),
-                (3, Some((130.0, 2, Some(0), 1))),
+                (0, Some((10.0, 0, None, 0, 1))),
+                (3, Some((130.0, 2, Some(0), 1, 1))),
                 (1, None),
+                (0, Some((300.0, 1, None, 0, 1))),
             ],
             free: vec![2],
             cells: vec![(17, 0, 1, 0), (18, 1, 1, 1)],
@@ -233,7 +237,7 @@ impl Payload {
         for (version, record) in &self.slots {
             p.extend(version.to_le_bytes());
             p.push(u8::from(record.is_some()));
-            if let Some((hue, dominance, source, origin)) = record {
+            if let Some((hue, dominance, source, origin, last_carried)) = record {
                 p.extend(hue.to_le_bytes());
                 p.push(*dominance);
                 p.push(u8::from(source.is_some()));
@@ -241,6 +245,7 @@ impl Payload {
                     p.extend(source.to_le_bytes());
                 }
                 p.extend(origin.to_le_bytes());
+                p.extend(last_carried.to_le_bytes());
             }
         }
         p.extend((self.free.len() as u32).to_le_bytes());
@@ -271,13 +276,18 @@ fn a_snapshot_built_from_the_documented_layout_imports() {
     assert_eq!(world.live_cells(), vec![(1, 1), (2, 1)]);
     assert_eq!(world.census().population_history, vec![5, 2]);
     let tree = world.allele_tree();
-    assert_eq!(tree.len(), 2);
+    assert_eq!(tree.len(), 3);
     assert_eq!((tree[0].allele.hue, tree[0].source), (10.0, None));
     assert_eq!(tree[0].status, AlleleStatus::Hidden);
-    assert_eq!(tree[1].allele.hue, 130.0);
-    assert_eq!(tree[1].allele.dominance, 2);
-    assert_eq!((tree[1].source, tree[1].origin), (Some(tree[0].id), 1));
-    assert_eq!(tree[1].status, AlleleStatus::Living);
+    assert_eq!((tree[1].allele.hue, tree[1].source), (300.0, None));
+    assert_eq!(
+        (tree[1].status, tree[1].last_carried),
+        (AlleleStatus::Extinct, 1)
+    );
+    assert_eq!(tree[2].allele.hue, 130.0);
+    assert_eq!(tree[2].allele.dominance, 2);
+    assert_eq!((tree[2].source, tree[2].origin), (Some(tree[0].id), 1));
+    assert_eq!(tree[2].status, AlleleStatus::Living);
     let births =
         [(1, 1), (2, 1)].map(|(x, y)| world.inspect(x, y).unwrap().unwrap().birth_generation);
     assert_eq!(births, [0, 1]);
@@ -286,27 +296,34 @@ fn a_snapshot_built_from_the_documented_layout_imports() {
 #[test]
 fn a_payload_describing_no_valid_world_is_rejected() {
     type Damage = fn(&mut Payload);
-    let cases: [(&str, Damage); 16] = [
+    let cases: [(&str, Damage); 18] = [
         ("world too small", |p| p.width = 8),
         ("rule count above 8", |p| p.birth |= 1 << 9),
         ("mutation rate above 1", |p| p.rate = 2.0),
         ("no founding alleles", |p| {
-            p.slots[0].1 = Some((10.0, 0, Some(1), 0))
+            p.slots[0].1 = Some((10.0, 0, Some(1), 0, 1));
+            p.slots[3].1 = Some((300.0, 1, Some(0), 0, 1));
         }),
         ("allele hue out of range", |p| {
-            p.slots[1].1 = Some((360.0, 2, Some(0), 1))
+            p.slots[1].1 = Some((360.0, 2, Some(0), 1, 1))
         }),
         ("allele dominance too high", |p| {
-            p.slots[1].1 = Some((130.0, 4, Some(0), 1))
+            p.slots[1].1 = Some((130.0, 4, Some(0), 1, 1))
         }),
         ("source beyond the slots", |p| {
-            p.slots[1].1 = Some((130.0, 2, Some(9), 1))
+            p.slots[1].1 = Some((130.0, 2, Some(9), 1, 1))
         }),
         ("source not retained", |p| {
-            p.slots[1].1 = Some((130.0, 2, Some(2), 1))
+            p.slots[1].1 = Some((130.0, 2, Some(2), 1, 1))
         }),
         ("allele descends from itself", |p| {
-            p.slots[1].1 = Some((130.0, 2, Some(1), 1))
+            p.slots[1].1 = Some((130.0, 2, Some(1), 1, 1))
+        }),
+        ("allele last carried before its origin", |p| {
+            p.slots[1].1 = Some((130.0, 2, Some(0), 1, 0))
+        }),
+        ("allele last carried after the current generation", |p| {
+            p.slots[1].1 = Some((130.0, 2, Some(0), 1, 2))
         }),
         ("retained slot listed free", |p| p.free = vec![1]),
         ("free slot listed twice", |p| {

@@ -15,7 +15,7 @@ mod soup;
 mod world;
 
 pub use allele_tree::{AlleleId, AlleleNode, AlleleStatus};
-pub use genetics::{Allele, AlleleCensus, Census, DEAD_PHENOTYPE, MAX_DOMINANCE};
+pub use genetics::{Allele, AlleleCensus, CarryingCell, Census, DEAD_PHENOTYPE, MAX_DOMINANCE};
 pub use inspection::{InspectedAllele, Inspection};
 pub use mutation::{MutationError, MutationSettings};
 pub use pattern::Pattern;

@@ -184,6 +184,7 @@ test('every control is reachable with Tab and labelled', async ({ page }) => {
     'Stamp a pattern',
     'Zoom out',
     'Zoom in',
+    'Lineage',
     'Settings',
     'Dock the controls to the side',
   ];

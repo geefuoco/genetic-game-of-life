@@ -102,6 +102,10 @@ _Avoid_: Root allele, original
 The record of which Allele each Allele mutated from, and in which Generation.
 _Avoid_: Phylogeny, gene tree
 
+**Carrier highlight**:
+A view of the World marking every live Cell that carries a chosen Allele, telling the Cells that show it from the Carriers that hide it.
+_Avoid_: Family highlight (which also takes in descendant Alleles)
+
 **Pedigree**:
 The record of a Cell's Parents, their Parents, and so on back in time.
 _Avoid_: Family tree, ancestry (when the Allele Tree is meant)
@@ -150,6 +154,7 @@ Friendlier words the app may show players in place of glossary terms. Code, docs
 | alive | live Cells |
 | hidden everywhere | an Allele carried by live Cells but shown by none |
 | ancestors | Pedigree |
+| lineage | the Allele Tree, drawn as each Allele's hue over time; the inspector also lists one Allele's lineage, its line of descent in the Allele Tree |
 | the pool | Allele Pool |
 | painted or seeded | painted, stamped or live in the World a run started as, so without Parents |
 | recorded history, ancestry memory | Recorded History, and its memory budget |

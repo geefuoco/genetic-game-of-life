@@ -30,7 +30,8 @@ pub struct InspectedAllele {
     /// Whether the Organism's Phenotype shows this Allele; a blend shows both.
     pub shown: bool,
     /// This Allele and the Alleles it descends from, back to its Founding
-    /// Allele. Alleles pruned since the Organism died are extinct.
+    /// Allele. Alleles pruned since the Organism died are extinct, last
+    /// carried no later than when they were last seen retained.
     pub lineage: Vec<AlleleNode>,
 }
 
@@ -45,7 +46,7 @@ pub(crate) struct InspectedOrganism {
     pub(crate) placed: bool,
     /// Each Allele's lineage, starting with the Allele, as it stood when
     /// inspection began; Alleles never change their source or origin, only
-    /// their status.
+    /// their status and when they were last carried.
     pub(crate) lineages: [Vec<AlleleNode>; 2],
     pub(crate) death_generation: Option<u64>,
 }
@@ -57,11 +58,12 @@ impl InspectedOrganism {
     }
 
     /// The inspection of this Organism in a World `width` Cells wide, where
-    /// `status` gives each Allele's status, or `None` once it is pruned.
+    /// `node` gives each Allele's node as it stands now, or `None` once it is
+    /// pruned.
     pub(crate) fn inspection(
         &self,
         width: usize,
-        status: impl Fn(AlleleId) -> Option<AlleleStatus>,
+        node: impl Fn(AlleleId) -> Option<AlleleNode>,
     ) -> Inspection {
         let [a, b] = self.alleles();
         let (shows_a, shows_b) = shows(a, b);
@@ -71,9 +73,11 @@ impl InspectedOrganism {
             shown,
             lineage: self.lineages[i]
                 .iter()
-                .map(|node| AlleleNode {
-                    status: status(node.id).unwrap_or(AlleleStatus::Extinct),
-                    ..*node
+                .map(|then| {
+                    node(then.id).unwrap_or(AlleleNode {
+                        status: AlleleStatus::Extinct,
+                        ..*then
+                    })
                 })
                 .collect(),
         };

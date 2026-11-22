@@ -1,8 +1,9 @@
 /**
  * Messages between the page and the simulation worker. The page sends
- * {@link Command}s; the worker answers with {@link WorkerEvent}s. Phenotype
- * buffers are transferred, never copied: the worker sends one with each
- * frame and the page hands it back with a `release` once it has drawn it.
+ * {@link Command}s; the worker answers with {@link WorkerEvent}s. Frame
+ * buffers are transferred, never copied: the worker sends its Phenotypes,
+ * and any Carrier highlight, with each frame and the page hands them back
+ * with a `release` once it has drawn them.
  */
 
 /** How often and how far Mutation changes an Allele as it is passed on. */
@@ -42,6 +43,9 @@ export type Genotype = readonly [Allele, Allele];
 /** A Cell's column and row. */
 export type CellPosition = readonly [x: number, y: number];
 
+/** Identity of an Allele within a World; an id never comes to mean a different Allele. */
+export type AlleleId = bigint;
+
 /** Where an Allele stands in the current population: shown by a live Cell, carried but shown by none, or carried by none. */
 export type AlleleStatus = 'living' | 'hidden' | 'extinct';
 
@@ -52,8 +56,21 @@ export interface LineageAllele extends Allele {
   status: AlleleStatus;
 }
 
+/** One Allele in the Allele Tree. */
+export interface AlleleNode extends Allele {
+  id: AlleleId;
+  /** The Allele it mutated from, or `null` for a Founding Allele. */
+  source: AlleleId | null;
+  /** The Generation it first appeared in. */
+  origin: number;
+  /** The latest Generation a live Cell carried it in: the current one while a live Cell does. */
+  lastCarried: number;
+  status: AlleleStatus;
+}
+
 /** One Allele of an inspected Organism. */
 export interface InspectedAllele extends Allele {
+  id: AlleleId;
   /** Whether the Organism's Phenotype shows this Allele; a blend shows both. */
   shown: boolean;
   /** This Allele, then each Allele it descends from, back to its Founding Allele. */
@@ -141,7 +158,23 @@ export type Command =
   | { type: 'set-pedigree-budget'; bytes: number }
   /** Starts or stops census events; the worker only takes a census while the page watches it. */
   | { type: 'watch-census'; watching: boolean }
-  | { type: 'release'; phenotypes: Float32Array };
+  /** Puts the Carrier highlight of an Allele in the frames, or takes it out for `null`. */
+  | { type: 'highlight'; allele: AlleleId | null }
+  | { type: 'release'; phenotypes: Float32Array; carriers: Uint8Array | null };
+
+/** How a Cell stands in a Carrier highlight, by the number {@link Highlight.carriers} holds for it. */
+export const CARRYING = { none: 0, shows: 1, hides: 2 } as const;
+
+/** The Carrier highlight of an Allele in one frame. */
+export interface Highlight {
+  allele: AlleleId;
+  /** One {@link CARRYING} number per Cell in row-major order. */
+  carriers: Uint8Array;
+  /** Live Cells whose Phenotype shows the Allele. */
+  shown: number;
+  /** Carriers that hide the Allele. */
+  hidden: number;
+}
 
 /** One drawable state of the World. */
 export interface Frame {
@@ -158,10 +191,13 @@ export interface Frame {
   canRedo: boolean;
   /** The Organism being inspected, as of this frame's Generation. */
   inspection: Inspection | null;
+  /** The Carrier highlight asked for, as of this frame's Generation. */
+  highlight: Highlight | null;
 }
 
 /** How many live Cells carry an Allele, and how many show or hide it. */
 export interface AlleleCensus extends Allele {
+  id: AlleleId;
   /** Copies carried by live Cells; a live Cell carrying it twice counts twice. */
   copies: number;
   /** Live Cells whose Phenotype shows it; a blend shows both its Alleles. */
@@ -177,6 +213,8 @@ export interface Census {
   population: number;
   /** Every Allele carried by a live Cell, shown or hidden. */
   alleles: AlleleCensus[];
+  /** The Allele Tree: every retained Allele, each before its descendants. */
+  tree: AlleleNode[];
   /** The population at each Generation from 0 to this one. */
   populationHistory: Uint32Array;
 }

@@ -47,10 +47,12 @@ export class Simulation {
     };
   }
 
-  /** Sends a command, transferring the buffer of a `release`. */
+  /** Sends a command, transferring the buffers of a `release`. */
   send(command: Command): void {
-    if (command.type === 'release') this.worker.postMessage(command, [command.phenotypes.buffer]);
-    else this.worker.postMessage(command);
+    if (command.type === 'release') {
+      const buffers = command.carriers ? [command.phenotypes.buffer, command.carriers.buffer] : [command.phenotypes.buffer];
+      this.worker.postMessage(command, buffers);
+    } else this.worker.postMessage(command);
   }
 
   dispose(): void {

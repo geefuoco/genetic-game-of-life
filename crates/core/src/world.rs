@@ -1,7 +1,8 @@
 use crate::allele_tree::{AlleleId, AlleleNode, AlleleStatus, AlleleTree, Slot};
 use crate::edit::{CellState, EditHistory, Stroke};
 use crate::genetics::{
-    phenotype, shows, wrap, Allele, AlleleCensus, Census, Genotype, DEAD_PHENOTYPE, MAX_DOMINANCE,
+    phenotype, shows, wrap, Allele, AlleleCensus, CarryingCell, Census, Genotype, DEAD_PHENOTYPE,
+    MAX_DOMINANCE,
 };
 use crate::inspection::{InspectedOrganism, Inspection};
 use crate::mutation::MutationSettings;
@@ -314,7 +315,7 @@ impl World {
             return Err(SnapshotError::UnsupportedRng(rng_version));
         }
         let rng = Rng::new(reader.u64()?);
-        let tree = AlleleTree::decode(&mut reader)?;
+        let tree = AlleleTree::decode(&mut reader, generation)?;
         let population = reader.index()?;
         reader.expect_items(population as u64, 20)?;
         let mut cells = vec![None; width * height];
@@ -390,7 +391,12 @@ impl World {
     /// Each Mutation draw decides whether the Allele mutates; a mutant then
     /// draws its hue shift and then its Dominance Level.
     pub fn step(&mut self) {
-        self.history.end_generation(&self.placed_cells());
+        let placed = self.placed_cells();
+        self.tree.mark_carried(
+            placed.iter().flat_map(|&index| self.cells[index]).flatten(),
+            self.generation,
+        );
+        self.history.end_generation(&placed);
         let cells = std::mem::take(&mut self.cells);
         let pool = AllelePool::new(&cells, self.tree.founding().to_vec());
         let mut next = vec![None; cells.len()];
@@ -421,8 +427,10 @@ impl World {
         self.cells = next;
         self.generation += 1;
         self.population_history.push(self.population());
-        self.tree
-            .prune(self.cells.iter().flatten().flatten().copied());
+        self.tree.prune(
+            self.cells.iter().flatten().flatten().copied(),
+            self.generation,
+        );
         self.edits.clear();
         self.history.keep_within_budget();
         self.follow_inspected(false);
@@ -734,14 +742,16 @@ impl World {
     /// descendants.
     pub fn allele_tree(&self) -> Vec<AlleleNode> {
         let tally = self.tally();
-        self.tree.nodes(|slot| tally[slot.index()].status())
+        self.tree
+            .nodes(self.generation, |slot| tally[slot.index()].status())
     }
 
     /// The chain from `id` back to its Founding Allele, starting with `id`;
     /// `None` if the World retains no Allele `id`.
     pub fn lineage(&self, id: AlleleId) -> Option<Vec<AlleleNode>> {
         let tally = self.tally();
-        self.tree.lineage(id, |slot| tally[slot.index()].status())
+        self.tree
+            .lineage(id, self.generation, |slot| tally[slot.index()].status())
     }
 
     /// Starts following the Organism at `(x, y)` for its inspector and
@@ -797,7 +807,10 @@ impl World {
         let organism = self.inspected.as_ref()?;
         let tally = self.tally();
         Some(organism.inspection(self.width, |id| {
-            self.tree.slot(id).map(|slot| tally[slot.index()].status())
+            self.tree.slot(id).map(|slot| {
+                self.tree
+                    .node(slot, self.generation, |slot| tally[slot.index()].status())
+            })
         }))
     }
 
@@ -888,6 +901,23 @@ impl World {
                 }
             })
             .collect()
+    }
+
+    /// The Carrier highlight of Allele `id`: every live Cell carrying it, in
+    /// row-major order, and whether each shows it or hides it; `None` if the
+    /// World retains no Allele `id`.
+    pub fn carrying_cells(&self, id: AlleleId) -> Option<Vec<CarryingCell>> {
+        let slot = self.tree.slot(id)?;
+        let carrying = self.cells.iter().enumerate().filter_map(|(index, cell)| {
+            let [a, b] = (*cell)?;
+            let (shows_a, shows_b) = shows(self.tree.allele(a), self.tree.allele(b));
+            (a == slot || b == slot).then(|| CarryingCell {
+                x: index % self.width,
+                y: index / self.width,
+                shown: (a == slot && shows_a) || (b == slot && shows_b),
+            })
+        });
+        Some(carrying.collect())
     }
 
     /// Copies, showing Cells and hiding Cells per Allele slot index.

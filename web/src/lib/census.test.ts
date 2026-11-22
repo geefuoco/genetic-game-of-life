@@ -3,7 +3,7 @@ import type { AlleleCensus } from '../protocol.ts';
 import { alleleRows, historyExtremes, reducedHistory } from './census.ts';
 
 function line(hue: number, shown: number, hidden: number, copies = shown + hidden): AlleleCensus {
-  return { hue, dominance: 1, copies, shown, hidden };
+  return { id: BigInt(hue), hue, dominance: 1, copies, shown, hidden };
 }
 
 describe('Allele rows', () => {

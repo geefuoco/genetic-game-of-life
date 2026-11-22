@@ -44,6 +44,16 @@ pub struct AlleleCensus {
     pub hidden: usize,
 }
 
+/// A live Cell carrying a given Allele, once or twice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CarryingCell {
+    pub x: usize,
+    pub y: usize,
+    /// Whether the Cell's Phenotype shows the Allele; `false` for a Carrier
+    /// that hides it.
+    pub shown: bool,
+}
+
 /// Snapshot of the genetic state of a World.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Census {

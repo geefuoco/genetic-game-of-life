@@ -6,6 +6,8 @@
     speed: string;
     docked: boolean;
     settingsOpen: boolean;
+    /** Whether the floating Lineage card is open. */
+    lineageOpen: boolean;
     tool: Tool;
     /** CSS colours of the brush's first and second Alleles. */
     brushColours: readonly [string, string];
@@ -22,6 +24,7 @@
     onzoomout: () => void;
     ontoggledock: () => void;
     ontogglesettings: () => void;
+    ontogglelineage: () => void;
   }
 
   let {
@@ -29,6 +32,7 @@
     speed,
     docked,
     settingsOpen,
+    lineageOpen,
     tool,
     brushColours,
     canUndo,
@@ -44,6 +48,7 @@
     onzoomout,
     ontoggledock,
     ontogglesettings,
+    ontogglelineage,
   }: Props = $props();
 
   const carrierDot = $derived(`linear-gradient(90deg, ${brushColours[0]} 50%, ${brushColours[1]} 50%)`);
@@ -156,6 +161,19 @@
   <span class="sep" aria-hidden="true"></span>
   <div class="group">
     {#if !docked}
+      <button
+        type="button"
+        class:on={lineageOpen}
+        aria-label="Lineage"
+        title="Lineage: each colour gene's hue over time"
+        aria-expanded={lineageOpen}
+        aria-controls="lineage-card"
+        onclick={ontogglelineage}
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+          ><path d="M2 8h3.5M5.5 8 8 4h6M5.5 8 8 12h6" /></svg
+        >
+      </button>
       <button
         type="button"
         bind:this={settingsToggle}
