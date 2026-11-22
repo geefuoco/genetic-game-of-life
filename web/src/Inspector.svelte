@@ -4,7 +4,7 @@
   import { capitalised, colourName } from './lib/colours.ts';
   import { paletteCss } from './lib/palette.ts';
   import PedigreeGraph from './PedigreeGraph.svelte';
-  import type { InspectedAllele, Inspection, LineageAllele, Pedigree } from './protocol.ts';
+  import type { AlleleId, InspectedAllele, Inspection, LineageAllele, Pedigree } from './protocol.ts';
 
   interface Props {
     inspection: Inspection;
@@ -18,9 +18,13 @@
     expandable: boolean;
     onexpand: () => void;
     onclose: () => void;
+    /** The Allele whose Carrier highlight is shown, if any. */
+    highlighted: AlleleId | null;
+    /** Called to highlight one of the Organism's Alleles, or to clear the highlight with `null`. */
+    onhighlight: (allele: InspectedAllele | null) => void;
   }
 
-  let { inspection, anchor, stage, pedigree, expandable, onexpand, onclose }: Props = $props();
+  let { inspection, anchor, stage, pedigree, expandable, onexpand, onclose, highlighted, onhighlight }: Props = $props();
 
   /** Space between the card and its Cell, and between the card and the stage edges, in CSS pixels. */
   const GAP = 18;
@@ -85,10 +89,20 @@
 </script>
 
 {#snippet gene(allele: InspectedAllele)}
-  <div class="gene" class:hidden={!allele.shown} style:color={paletteCss(allele.hue)}>
-    <span class="swatch" style:background={allele.shown ? paletteCss(allele.hue) : null} aria-hidden="true"></span>
-    <span class="name">{name(allele)}</span>
-    <span class="state">{allele.shown ? 'shown' : 'hidden'}</span>
+  {@const lit = allele.id === highlighted}
+  <div class="gene" class:hidden={!allele.shown} class:lit style:color={paletteCss(allele.hue)}>
+    <button
+      type="button"
+      class="pick"
+      aria-pressed={lit}
+      aria-label="Light up the cells carrying the {allele.shown ? 'shown' : 'hidden'} {name(allele)} colour gene"
+      title={lit ? 'Clear the highlight' : 'Light up the cells carrying it'}
+      onclick={() => onhighlight(lit ? null : allele)}
+    >
+      <span class="swatch" style:background={allele.shown ? paletteCss(allele.hue) : null} aria-hidden="true"></span>
+      <span class="name">{name(allele)}</span>
+      <span class="state">{allele.shown ? 'shown' : 'hidden'}</span>
+    </button>
     <span class="bars" role="img" aria-label={dominanceText(allele)} title={dominanceText(allele)}>
       {#each { length: MAX_DOMINANCE + 1 }, level (level)}
         <i class:filled={level <= allele.dominance}></i>
@@ -118,7 +132,7 @@
       >
     </button>
   </header>
-  <p class="caption">One colour gene from each parent. Bars show strength.</p>
+  <p class="caption">One colour gene from each parent. Bars show strength. Click one to light up the cells carrying it.</p>
   <div class="sum" role="group" aria-label="Its colour genes">
     {@render gene(order[0])}
     <span class="operator" aria-hidden="true">+</span>
@@ -236,6 +250,21 @@
     padding: 10px 4px 9px;
     background: rgb(255 255 255 / 3.5%);
     border-radius: 12px;
+    box-shadow: inset 0 0 0 1.5px transparent;
+    transition: box-shadow 0.12s;
+  }
+
+  .gene:hover,
+  .gene.lit {
+    box-shadow: inset 0 0 0 1.5px currentcolor;
+  }
+
+  .pick {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    align-items: center;
+    border-radius: 8px;
   }
 
   .swatch {

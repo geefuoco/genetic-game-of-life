@@ -1,5 +1,6 @@
 import { worldWindow, type Camera, type Size } from './camera.ts';
 import { paletteTable } from './palette.ts';
+import { CARRYING } from '../protocol.ts';
 
 /** What to draw and where: the camera and the viewport in CSS pixels. */
 export interface View {
@@ -8,15 +9,27 @@ export interface View {
   pixelRatio: number;
 }
 
-/** The Phenotypes of one Generation. */
+/** The Phenotypes of one Generation, and any Carrier highlight of it. */
 export interface Cells {
   width: number;
   height: number;
   phenotypes: Float32Array;
+  highlight: {
+    /** Hue of the highlighted Allele, in degrees. */
+    hue: number;
+    /** One `CARRYING` number per Cell in row-major order. */
+    carriers: Uint8Array;
+  } | null;
 }
 
 /** Page background, `#06070a`, as sRGB channels in `0..1`. */
 const BACKGROUND = [6 / 255, 7 / 255, 10 / 255] as const;
+/** Colour of a live Cell a Carrier highlight leaves out, `#181a21`. */
+const DIMMED = [24 / 255, 26 / 255, 33 / 255] as const;
+/** Width of a hidden Carrier's ring as a fraction of the drawn square, and at least one device pixel. */
+const RING_FRACTION = 0.2;
+/** Strength of a hidden Carrier's colour when its square is too small to hold a ring with a hollow centre. */
+const FAINT_CARRIER = 0.45;
 /** Distance over which the World window's edges fade into the background, in CSS pixels. */
 const FADE_PX = 70;
 /** Zoom, in CSS pixels per Cell, from which Cells have a gap between them. */
@@ -44,6 +57,11 @@ precision highp sampler2D;
 
 uniform sampler2D u_cells;
 uniform sampler2D u_palette;
+uniform highp usampler2D u_carriers;
+uniform bool u_highlight;
+uniform float u_highlightHue;
+uniform vec3 u_dimmed;
+uniform float u_ring;
 uniform float u_paletteSize;
 uniform vec2 u_world;
 uniform float u_scale;
@@ -76,16 +94,19 @@ void main() {
   if (u_fadeAxes.x > 0.5) alpha *= edgeFade(start.x, u_window.x, u_window.z);
   if (u_fadeAxes.y > 0.5) alpha *= edgeFade(start.y, u_window.y, u_window.w);
   if (alpha <= 0.02) return;
-  float hue = texelFetch(u_cells, ivec2(mod(cell, u_world)), 0).r;
+  ivec2 texel = ivec2(mod(cell, u_world));
+  float hue = texelFetch(u_cells, texel, 0).r;
   if (hue < 0.0) return;
-  float coverage = 1.0;
-  if (u_gap > 0.0) {
-    float half_side = (u_scale - u_gap) * 0.5;
-    vec2 offset = abs(pixel - start - half_side) - (half_side - u_radius);
-    float edge = length(max(offset, 0.0)) + min(max(offset.x, offset.y), 0.0) - u_radius;
-    coverage = clamp(0.5 - edge, 0.0, 1.0);
+  uint mark = u_highlight ? texelFetch(u_carriers, texel, 0).r : ${CARRYING.shows}u;
+  float half_side = (u_scale - u_gap) * 0.5;
+  vec2 offset = abs(pixel - start - half_side) - (half_side - u_radius);
+  float edge = length(max(offset, 0.0)) + min(max(offset.x, offset.y), 0.0) - u_radius;
+  float coverage = u_gap > 0.0 ? clamp(0.5 - edge, 0.0, 1.0) : 1.0;
+  if (mark == ${CARRYING.hides}u) {
+    bool hollow = 2.0 * half_side >= 2.0 * u_ring + 1.0;
+    coverage *= hollow ? clamp(0.5 + edge + u_ring, 0.0, 1.0) : ${FAINT_CARRIER.toFixed(2)};
   }
-  vec3 shade = texture(u_palette, vec2(hue / 360.0 + 0.5 / u_paletteSize, 0.5)).rgb;
+  vec3 shade = mark == ${CARRYING.none}u ? u_dimmed : texture(u_palette, vec2((mark == ${CARRYING.hides}u ? u_highlightHue : hue) / 360.0 + 0.5 / u_paletteSize, 0.5)).rgb;
   colour = vec4(mix(u_background, shade, coverage * alpha), 1.0);
 }
 `;
@@ -93,6 +114,11 @@ void main() {
 const UNIFORMS = [
   'u_cells',
   'u_palette',
+  'u_carriers',
+  'u_highlight',
+  'u_highlightHue',
+  'u_dimmed',
+  'u_ring',
   'u_paletteSize',
   'u_world',
   'u_scale',
@@ -111,14 +137,20 @@ type Uniform = (typeof UNIFORMS)[number];
 /**
  * Draws the World with WebGL2: one copy of the torus inside a window whose
  * edges fade into the background, each live Cell a rounded square in its
- * Phenotype's palette colour.
+ * Phenotype's palette colour. Under a Carrier highlight, Cells showing the
+ * Allele keep their colour, Carriers hiding it are rings in its colour, or
+ * faint squares when too small for a ring, and every other live Cell is
+ * dimmed.
  */
 export class Renderer {
   private readonly gl: WebGL2RenderingContext;
   private readonly canvas: HTMLCanvasElement;
   private readonly uniforms: Record<Uniform, WebGLUniformLocation | null>;
   private readonly cells: WebGLTexture;
+  private readonly carriers: WebGLTexture;
   private world: Size = { width: 0, height: 0 };
+  /** The size of the carriers texture, which is only allocated once a highlight needs it. */
+  private carriersSize: Size = { width: 0, height: 0 };
 
   /** A renderer for `canvas`, or `null` where WebGL2 is unavailable or cannot run the shaders. */
   static create(canvas: HTMLCanvasElement): Renderer | null {
@@ -145,8 +177,11 @@ export class Renderer {
     this.cells = texture(gl, 0, gl.NEAREST, gl.CLAMP_TO_EDGE);
     texture(gl, 1, gl.LINEAR, gl.REPEAT);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, PALETTE_SIZE, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, paletteTable(PALETTE_SIZE));
+    this.carriers = texture(gl, 2, gl.NEAREST, gl.CLAMP_TO_EDGE);
     gl.uniform1i(this.uniforms.u_cells, 0);
     gl.uniform1i(this.uniforms.u_palette, 1);
+    gl.uniform1i(this.uniforms.u_carriers, 2);
+    gl.uniform3f(this.uniforms.u_dimmed, ...DIMMED);
     gl.uniform1f(this.uniforms.u_paletteSize, PALETTE_SIZE);
     gl.uniform3f(this.uniforms.u_background, ...BACKGROUND);
   }
@@ -161,6 +196,18 @@ export class Renderer {
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, cells.width, cells.height, 0, gl.RED, gl.FLOAT, cells.phenotypes);
     } else {
       gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, cells.width, cells.height, gl.RED, gl.FLOAT, cells.phenotypes);
+    }
+    gl.uniform1i(this.uniforms.u_highlight, cells.highlight ? 1 : 0);
+    if (!cells.highlight) return;
+    gl.uniform1f(this.uniforms.u_highlightHue, cells.highlight.hue);
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, this.carriers);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    if (cells.width !== this.carriersSize.width || cells.height !== this.carriersSize.height) {
+      this.carriersSize = { width: cells.width, height: cells.height };
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8UI, cells.width, cells.height, 0, gl.RED_INTEGER, gl.UNSIGNED_BYTE, cells.highlight.carriers);
+    } else {
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, cells.width, cells.height, gl.RED_INTEGER, gl.UNSIGNED_BYTE, cells.highlight.carriers);
     }
   }
 
@@ -190,6 +237,7 @@ export class Renderer {
     gl.uniform1f(u.u_fade, FADE_PX * pixelRatio);
     gl.uniform1f(u.u_gap, gap * pixelRatio);
     gl.uniform1f(u.u_radius, radius * pixelRatio);
+    gl.uniform1f(u.u_ring, Math.max(1, RING_FRACTION * (camera.scale - gap) * pixelRatio));
     gl.uniform1f(u.u_canvasHeight, height);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }

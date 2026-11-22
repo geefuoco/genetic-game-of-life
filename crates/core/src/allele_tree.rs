@@ -26,6 +26,21 @@ pub struct AlleleId {
     version: u32,
 }
 
+impl AlleleId {
+    /// The id as one number, for passing it outside Rust.
+    pub fn to_bits(self) -> u64 {
+        u64::from(self.version) << 32 | u64::from(self.slot)
+    }
+
+    /// The id whose [`AlleleId::to_bits`] is `bits`.
+    pub fn from_bits(bits: u64) -> Self {
+        Self {
+            slot: bits as u32,
+            version: (bits >> 32) as u32,
+        }
+    }
+}
+
 /// Where an Allele stands in the current population.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AlleleStatus {
@@ -46,6 +61,9 @@ pub struct AlleleNode {
     pub source: Option<AlleleId>,
     /// The Generation in which this Allele first appeared in the World.
     pub origin: u64,
+    /// The latest Generation in which a live Cell carried this Allele: the
+    /// current one while a live Cell does, and its origin if none ever did.
+    pub last_carried: u64,
     pub status: AlleleStatus,
 }
 
@@ -54,6 +72,8 @@ struct Record {
     allele: Allele,
     source: Option<Slot>,
     origin: u64,
+    /// The latest Generation a live Cell carried it in, as last marked.
+    last_carried: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -88,6 +108,7 @@ impl AlleleTree {
                         allele,
                         source: None,
                         origin: 0,
+                        last_carried: 0,
                     }),
                 })
                 .collect(),
@@ -117,6 +138,7 @@ impl AlleleTree {
                     writer.index(source.index());
                 }
                 writer.u64(record.origin);
+                writer.u64(record.last_carried);
             }
         }
         writer.index(self.free.len());
@@ -125,9 +147,10 @@ impl AlleleTree {
         }
     }
 
-    /// Reads a tree written by [`AlleleTree::encode`], rejecting any tree the
-    /// World could not have built.
-    pub(crate) fn decode(reader: &mut Reader) -> Result<Self, SnapshotError> {
+    /// Reads a tree written by [`AlleleTree::encode`] for a World at
+    /// Generation `generation`, rejecting any tree the World could not have
+    /// built.
+    pub(crate) fn decode(reader: &mut Reader, generation: u64) -> Result<Self, SnapshotError> {
         let slot_count = reader.index()?;
         reader.expect_items(slot_count as u64, 5)?;
         let mut entries = Vec::with_capacity(slot_count);
@@ -135,7 +158,7 @@ impl AlleleTree {
             let version = reader.u32()?;
             let record = match reader.u8()? {
                 0 => None,
-                1 => Some(Self::decode_record(reader, index, slot_count)?),
+                1 => Some(Self::decode_record(reader, index, slot_count, generation)?),
                 flag => {
                     return Err(invalid(format!(
                         "allele slot {index} has retained flag {flag}, expected 0 or 1"
@@ -192,6 +215,7 @@ impl AlleleTree {
         reader: &mut Reader,
         index: usize,
         slot_count: usize,
+        generation: u64,
     ) -> Result<Record, SnapshotError> {
         let allele = Allele {
             hue: reader.f64()?,
@@ -220,10 +244,18 @@ impl AlleleTree {
                 )))
             }
         };
+        let origin = reader.u64()?;
+        let last_carried = reader.u64()?;
+        if !(origin..=generation).contains(&last_carried) {
+            return Err(invalid(format!(
+                "allele slot {index} was last carried in generation {last_carried}, outside its origin {origin} to generation {generation}"
+            )));
+        }
         Ok(Record {
             allele,
             source,
-            origin: reader.u64()?,
+            origin,
+            last_carried,
         })
     }
 
@@ -282,6 +314,7 @@ impl AlleleTree {
             allele,
             source: None,
             origin,
+            last_carried: origin,
         });
         let at = self.founding.partition_point(|s| s.index() < slot.index());
         self.founding.insert(at, slot);
@@ -311,6 +344,13 @@ impl AlleleTree {
             .expect("genotypes only refer to retained Alleles")
     }
 
+    fn record_mut(&mut self, slot: Slot) -> &mut Record {
+        self.entries[slot.index()]
+            .record
+            .as_mut()
+            .expect("genotypes only refer to retained Alleles")
+    }
+
     /// The slot holding `id`, if it is still retained.
     pub(crate) fn slot(&self, id: AlleleId) -> Option<Slot> {
         let entry = self.entries.get(id.slot as usize)?;
@@ -323,6 +363,7 @@ impl AlleleTree {
             allele,
             source: Some(source),
             origin,
+            last_carried: origin,
         })
     }
 
@@ -343,11 +384,25 @@ impl AlleleTree {
         }
     }
 
-    /// Prunes every non-Founding Allele that is neither in `carried` nor an
-    /// ancestor of an Allele in it.
-    pub(crate) fn prune(&mut self, carried: impl IntoIterator<Item = Slot>) {
+    /// Notes that live Cells carry the Alleles in `carried` in Generation
+    /// `generation`.
+    pub(crate) fn mark_carried(
+        &mut self,
+        carried: impl IntoIterator<Item = Slot>,
+        generation: u64,
+    ) {
+        for slot in carried {
+            self.record_mut(slot).last_carried = generation;
+        }
+    }
+
+    /// Marks the Alleles in `carried` as for [`AlleleTree::mark_carried`],
+    /// then prunes every non-Founding Allele that is neither in `carried` nor
+    /// an ancestor of an Allele in it.
+    pub(crate) fn prune(&mut self, carried: impl IntoIterator<Item = Slot>, generation: u64) {
         let mut keep = vec![false; self.entries.len()];
         for slot in carried {
+            self.record_mut(slot).last_carried = generation;
             let mut next = Some(slot);
             while let Some(slot) = next.filter(|s| !keep[s.index()]) {
                 keep[slot.index()] = true;
@@ -362,41 +417,59 @@ impl AlleleTree {
         }
     }
 
-    /// Every retained Allele, each before its descendants.
-    pub(crate) fn nodes(&self, status: impl Fn(Slot) -> AlleleStatus) -> Vec<AlleleNode> {
+    /// Every retained Allele, each before its descendants, in Generation
+    /// `generation` with `status` giving each Allele's status.
+    pub(crate) fn nodes(
+        &self,
+        generation: u64,
+        status: impl Fn(Slot) -> AlleleStatus,
+    ) -> Vec<AlleleNode> {
         let mut nodes: Vec<AlleleNode> = (0..self.entries.len())
             .map(Slot::at)
             .filter(|slot| self.entries[slot.index()].record.is_some())
-            .map(|slot| self.node(slot, &status))
+            .map(|slot| self.node(slot, generation, &status))
             .collect();
         nodes.sort_by_key(|node| (node.origin, node.id));
         nodes
     }
 
     /// `id` and its ancestors back to its Founding Allele, or `None` if `id`
-    /// is not retained.
+    /// is not retained, as for [`AlleleTree::nodes`].
     pub(crate) fn lineage(
         &self,
         id: AlleleId,
+        generation: u64,
         status: impl Fn(Slot) -> AlleleStatus,
     ) -> Option<Vec<AlleleNode>> {
         let mut next = Some(self.slot(id)?);
         let mut chain = vec![];
         while let Some(slot) = next {
-            chain.push(self.node(slot, &status));
+            chain.push(self.node(slot, generation, &status));
             next = self.record(slot).source;
         }
         Some(chain)
     }
 
-    fn node(&self, slot: Slot, status: impl Fn(Slot) -> AlleleStatus) -> AlleleNode {
+    /// The node of the Allele in `slot`, as for [`AlleleTree::nodes`].
+    pub(crate) fn node(
+        &self,
+        slot: Slot,
+        generation: u64,
+        status: impl Fn(Slot) -> AlleleStatus,
+    ) -> AlleleNode {
         let record = self.record(slot);
+        let status = status(slot);
         AlleleNode {
             id: self.id(slot),
             allele: record.allele,
             source: record.source.map(|source| self.id(source)),
             origin: record.origin,
-            status: status(slot),
+            last_carried: if status == AlleleStatus::Extinct {
+                record.last_carried
+            } else {
+                generation
+            },
+            status,
         }
     }
 }

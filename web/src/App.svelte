@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
+  import AlleleTree from './AlleleTree.svelte';
   import Brush from './Brush.svelte';
   import Dock from './Dock.svelte';
+  import HighlightPill from './HighlightPill.svelte';
   import Inspector from './Inspector.svelte';
   import Settings from './Settings.svelte';
   import Stats from './Stats.svelte';
@@ -14,7 +16,7 @@
   import { DEFAULT_SPEED, SPEEDS, cycleSpeed, nudgeSpeed } from './lib/speed.ts';
   import { paletteCss } from './lib/palette.ts';
   import type { Rect } from './lib/camera.ts';
-  import type { Census, CellPosition, Frame, Inspection, MutationSettings, Pedigree, SoupSettings } from './protocol.ts';
+  import type { AlleleId, Census, CellPosition, Frame, Inspection, MutationSettings, Pedigree, SoupSettings } from './protocol.ts';
   import { Simulation } from './simulation.ts';
 
   /** The Soup the page opens on, apart from its random Seed: Conway's Life with the core's default Mutation. */
@@ -36,8 +38,13 @@
   let speed = $state(DEFAULT_SPEED);
   let generation = $state(0);
   let population = $state(0);
-  /** The latest census, while the side panel that shows it is open. */
+  /** The latest census, while the side panel or the Lineage card that shows it is open. */
   let census = $state.raw<Census | null>(null);
+  let lineageOpen = $state(false);
+  /** The Allele whose Carrier highlight is shown, with its hue. */
+  let highlighted = $state.raw<{ id: AlleleId; hue: number } | null>(null);
+  /** How many live Cells show and hide the highlighted Allele, as of the latest frame that reports them. */
+  let highlightCounts = $state.raw<{ shown: number; hidden: number } | null>(null);
   let hintShown = $state(true);
   let problem = $state<string | null>(null);
   let settingsOpen = $state(false);
@@ -91,7 +98,16 @@
     canUndo = frame.canUndo;
     canRedo = frame.canRedo;
     inspection = following ? frame.inspection : null;
+    if (highlighted && frame.highlight?.allele === highlighted.id) highlightCounts = { shown: frame.highlight.shown, hidden: frame.highlight.hidden };
     view.present(frame);
+  }
+
+  /** Shows the Carrier highlight of an Allele, or clears it with `null`. */
+  function highlight(allele: { id: AlleleId; hue: number } | null): void {
+    highlighted = allele && { id: allele.id, hue: allele.hue };
+    highlightCounts = null;
+    if (allele) hintShown = false;
+    simulation?.send({ type: 'highlight', allele: allele?.id ?? null });
   }
 
   function inspect(cell: CellPosition | null): void {
@@ -169,6 +185,8 @@
   }
 
   function newSoup(soup: NewSoup): void {
+    highlighted = null;
+    highlightCounts = null;
     simulation?.send({ type: 'start', soup: { ...soup, rule: rule.running, mutation }, rate: SPEEDS[speed]!.rate, running });
   }
 
@@ -195,10 +213,20 @@
     }
   }
 
-  /** Asks for census events only while the side panel shows them. */
+  function toggleLineage(): void {
+    lineageOpen = !lineageOpen;
+    watchCensus();
+  }
+
+  /** Whether the side panel or the Lineage card shows the census. */
+  function censusShown(): boolean {
+    return docked || lineageOpen;
+  }
+
+  /** Asks for census events only while the side panel or the Lineage card shows them. */
   function watchCensus(): void {
-    if (!docked) census = null;
-    simulation?.send({ type: 'watch-census', watching: docked });
+    if (!censusShown()) census = null;
+    simulation?.send({ type: 'watch-census', watching: censusShown() });
   }
 
   function isEditable(target: EventTarget | null): boolean {
@@ -234,6 +262,11 @@
       closeInspector();
       return;
     }
+    if (event.key === 'Escape' && highlighted) {
+      event.preventDefault();
+      highlight(null);
+      return;
+    }
     const action = actionOf(event);
     if (!action) return;
     event.preventDefault();
@@ -260,7 +293,7 @@
     simulation = new Simulation({
       frame: onFrame,
       census: (next) => {
-        if (docked) census = next;
+        if (censusShown()) census = next;
       },
       rule: (running) => {
         rule = { running, rejected: null };
@@ -298,6 +331,7 @@
     speed={SPEEDS[speed]!.label}
     {docked}
     {settingsOpen}
+    {lineageOpen}
     {tool}
     {brushColours}
     {canUndo}
@@ -313,7 +347,14 @@
     onzoomout={() => view.zoom(1 / ZOOM_STEP)}
     ontoggledock={() => toggleDock(true)}
     ontogglesettings={toggleSettings}
+    ontogglelineage={toggleLineage}
   />
+{/snippet}
+
+{#snippet lineage(height: number)}
+  {#if census}
+    <AlleleTree {census} {height} highlighted={highlighted?.id ?? null} onhighlight={highlight} />
+  {/if}
 {/snippet}
 
 {#snippet settings()}
@@ -344,7 +385,8 @@
       {inspected}
       oninspect={inspect}
       onsupport={(ok) => (supported = ok)}
-      onrelease={(phenotypes) => simulation?.send({ type: 'release', phenotypes })}
+      {highlighted}
+      onrelease={(buffers) => simulation?.send({ type: 'release', ...buffers })}
       onstroke={stroke}
       onstamp={stamp}
       onstrokeend={() => simulation?.send({ type: 'end-stroke' })}
@@ -359,7 +401,12 @@
         {expandable}
         onexpand={expandPedigree}
         onclose={closeInspector}
+        highlighted={highlighted?.id ?? null}
+        onhighlight={highlight}
       />
+    {/if}
+    {#if highlighted}
+      <HighlightPill hue={highlighted.hue} counts={highlightCounts} onclear={() => highlight(null)} />
     {/if}
     <header class="wordmark" aria-hidden={docked}>
       <h1>genetic life</h1>
@@ -367,6 +414,9 @@
     </header>
     <p class="hint" class:gone={!hintShown}>click a cell to see its colour genes · drag to move · scroll to zoom</p>
     {#if !docked}
+      {#if lineageOpen}
+        <div class="lineage-card glass" id="lineage-card">{@render lineage(210)}</div>
+      {/if}
       <div class="floating">{@render controls()}</div>
       {#if settingsOpen}
         <div class="popover glass" id="settings-popover" role="dialog" aria-label="Settings" bind:this={popover}>{@render settings()}</div>
@@ -382,6 +432,7 @@
       {#if docked}
         {@render controls()}
         <Stats {generation} {population} {census} />
+        {@render lineage(300)}
         <section class="panel-settings" aria-labelledby="panel-settings-title">
           <h2 id="panel-settings-title">Settings</h2>
           {@render settings()}
@@ -469,6 +520,18 @@
     width: max-content;
     max-width: calc(100% - 32px);
     transform: translateX(-50%);
+  }
+
+  .lineage-card {
+    position: absolute;
+    top: 18px;
+    right: 18px;
+    z-index: 4;
+    width: 344px;
+    max-width: calc(100% - 36px);
+    min-height: 60px;
+    padding: 14px 14px 10px;
+    border-radius: 16px;
   }
 
   .popover {

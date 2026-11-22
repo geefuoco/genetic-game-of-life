@@ -1,9 +1,13 @@
+import { CARRYING, transferable } from '../protocol.ts';
 import type {
   AlleleCensus,
+  AlleleId,
+  AlleleNode,
   AlleleStatus,
   Census,
   Command,
   Genotype,
+  Highlight,
   InspectedAllele,
   Inspection,
   Pedigree,
@@ -46,6 +50,10 @@ export interface EngineWorld {
   setPedigreeBudget(bytes: number): void;
   /** The census of living Alleles, packed as the WASM `WebWorld` documents. */
   census(): Float64Array;
+  /** The Allele Tree, packed as the WASM `WebWorld` documents. */
+  alleleTree(): Float64Array;
+  /** Writes the Carrier highlight of an Allele into `out` as {@link CARRYING} numbers, all `none` once the World no longer retains it. */
+  carryingCells(allele: AlleleId, out: Uint8Array): void;
   /** The population at each Generation from 0 to the current one. */
   populationHistory(): Uint32Array;
   free(): void;
@@ -87,6 +95,10 @@ export class Engine {
   private width = 0;
   private height = 0;
   private free: Float32Array[] = [];
+  /** Carrier highlight buffers the page has handed back, ready to fill. */
+  private freeCarriers: Uint8Array[] = [];
+  /** The Allele whose Carrier highlight the frames carry, if any. */
+  private highlighted: AlleleId | null = null;
   private framePending = false;
   private running = false;
   private rate: Rate = 15;
@@ -178,7 +190,12 @@ export class Engine {
         this.cancelCensusTimer();
         if (command.watching) this.sendCensus();
         break;
+      case 'highlight':
+        this.highlighted = command.allele;
+        this.publish();
+        break;
       case 'release':
+        if (command.carriers?.length === this.cells) this.freeCarriers.push(command.carriers);
         if (command.phenotypes.length === this.cells) {
           this.free.push(command.phenotypes);
           if (this.framePending) this.publish();
@@ -193,6 +210,8 @@ export class Engine {
     this.world = null;
     this.cells = 0;
     this.free = [];
+    this.freeCarriers = [];
+    this.highlighted = null;
     this.framePending = false;
     this.cancelCensusTimer();
     this.censusSentAt = -Infinity;
@@ -339,7 +358,7 @@ export class Engine {
     if (!world) return;
     let census: Census;
     try {
-      census = unpackCensus(world.census(), world.populationHistory());
+      census = unpackCensus(world.census(), world.alleleTree(), world.populationHistory());
     } catch (error) {
       this.options.send({ type: 'error', message: messageOf(error) }, []);
       return;
@@ -359,6 +378,7 @@ export class Engine {
     }
     this.framePending = false;
     world.phenotypes(buffer);
+    const highlight = this.highlight(world);
     this.options.send(
       {
         type: 'frame',
@@ -370,9 +390,24 @@ export class Engine {
         canUndo: world.canUndo(),
         canRedo: world.canRedo(),
         inspection: unpackInspection(world.inspection()),
+        highlight,
       },
-      [buffer.buffer],
+      transferable({ phenotypes: buffer, carriers: highlight?.carriers ?? null }),
     );
+  }
+
+  /** The Carrier highlight asked for, in a handed-back buffer or a new one. */
+  private highlight(world: EngineWorld): Highlight | null {
+    if (this.highlighted === null) return null;
+    const carriers = this.freeCarriers.pop() ?? new Uint8Array(this.cells);
+    world.carryingCells(this.highlighted, carriers);
+    let shown = 0;
+    let hidden = 0;
+    for (const mark of carriers) {
+      if (mark === CARRYING.shows) shown++;
+      else if (mark === CARRYING.hides) hidden++;
+    }
+    return { allele: this.highlighted, carriers, shown, hidden };
   }
 }
 
@@ -387,15 +422,11 @@ const STATUSES: readonly AlleleStatus[] = ['living', 'hidden', 'extinct'];
 /** An inspection as the World packs it, unpacked; throws if it does not follow the packed layout. */
 function unpackInspection(packed: Float64Array | undefined): Inspection | null {
   if (!packed) return null;
-  let at = 0;
-  const next = (): number => {
-    const value = packed[at++];
-    if (value === undefined) throw new Error(`a packed inspection ends after ${packed.length} numbers`);
-    return value;
-  };
+  const next = reader(packed, 'inspection');
   const [x, y, birthGeneration, deathGeneration, phenotype] = [next(), next(), next(), next(), next()];
   const allele = (): InspectedAllele => {
     const shown = next() === 1;
+    const id = alleleId(next(), next());
     const lineage = Array.from({ length: next() }, () => ({
       hue: next(),
       dominance: next(),
@@ -404,26 +435,57 @@ function unpackInspection(packed: Float64Array | undefined): Inspection | null {
     }));
     const own = lineage[0];
     if (!own) throw new Error('a packed inspection has an Allele with an empty lineage');
-    return { hue: own.hue, dominance: own.dominance, shown, lineage };
+    return { id, hue: own.hue, dominance: own.dominance, shown, lineage };
   };
   const alleles = [allele(), allele()] as const;
   return { x, y, birthGeneration, deathGeneration: deathGeneration < 0 ? null : deathGeneration, phenotype, alleles };
 }
 
-/** A census as the World packs it, unpacked, with the population history; throws if it does not follow the packed layout. */
-function unpackCensus(packed: Float64Array, populationHistory: Uint32Array): Census {
+/** A census and Allele Tree as the World packs them, unpacked, with the population history; throws if they do not follow the packed layouts. */
+function unpackCensus(packed: Float64Array, packedTree: Float64Array, populationHistory: Uint32Array): Census {
+  const next = reader(packed, 'census');
+  const [generation, population] = [next(), next()];
+  const alleles: AlleleCensus[] = [];
+  while (next.more()) {
+    alleles.push({ id: alleleId(next(), next()), hue: next(), dominance: next(), copies: next(), shown: next(), hidden: next() });
+  }
+  return { type: 'census', generation, population, alleles, tree: unpackTree(packedTree), populationHistory };
+}
+
+/** An Allele Tree as the World packs it, unpacked; throws if it does not follow the packed layout. */
+function unpackTree(packed: Float64Array): AlleleNode[] {
+  const next = reader(packed, 'Allele Tree');
+  const tree: AlleleNode[] = [];
+  while (next.more()) {
+    const id = alleleId(next(), next());
+    const [sourceHigh, sourceLow] = [next(), next()];
+    tree.push({
+      id,
+      source: sourceHigh < 0 ? null : alleleId(sourceHigh, sourceLow),
+      hue: next(),
+      dominance: next(),
+      origin: next(),
+      lastCarried: next(),
+      status: status(next()),
+    });
+  }
+  return tree;
+}
+
+/** Reads the numbers of a packed `what` in order, throwing if it ends early. */
+function reader(packed: Float64Array, what: string): (() => number) & { more(): boolean } {
   let at = 0;
   const next = (): number => {
     const value = packed[at++];
-    if (value === undefined) throw new Error(`a packed census ends after ${packed.length} numbers`);
+    if (value === undefined) throw new Error(`a packed ${what} ends after ${packed.length} numbers`);
     return value;
   };
-  const [generation, population] = [next(), next()];
-  const alleles: AlleleCensus[] = [];
-  while (at < packed.length) {
-    alleles.push({ hue: next(), dominance: next(), copies: next(), shown: next(), hidden: next() });
-  }
-  return { type: 'census', generation, population, alleles, populationHistory };
+  return Object.assign(next, { more: () => at < packed.length });
+}
+
+/** An Allele id from the high and low 32 bits the World packs it as. */
+function alleleId(high: number, low: number): AlleleId {
+  return (BigInt(high) << 32n) | BigInt(low);
 }
 
 /** Pedigree origins by the number the World packs them as. */
@@ -432,14 +494,9 @@ const ORIGINS: readonly PedigreeOrigin[] = ['born', 'placed', 'beyond', 'unexplo
 /** A Pedigree as the World packs it, unpacked; throws if it does not follow the packed layout. */
 function unpackPedigree(packed: Float64Array | undefined): Pedigree | null {
   if (!packed) return null;
-  let at = 0;
-  const next = (): number => {
-    const value = packed[at++];
-    if (value === undefined) throw new Error(`a packed pedigree ends after ${packed.length} numbers`);
-    return value;
-  };
+  const next = reader(packed, 'pedigree');
   const organisms: Pedigree['organisms'] = [];
-  while (at < packed.length) {
+  while (next.more()) {
     const [x, y, birthGeneration, depth, origin, fromAllelePool, parentCount] = [next(), next(), next(), next(), next(), next(), next()];
     const parents = Array.from({ length: parentCount }, (): PedigreeParent => ({ organism: next(), allele: next() === 1 ? 1 : 0 }));
     const named = ORIGINS[origin];

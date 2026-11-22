@@ -2,8 +2,8 @@
 //! steps and reads Phenotypes from.
 
 use genetic_life_core::{
-    Allele, AlleleStatus, Inspection, MutationSettings, Origin, Pattern, Pedigree, Rule, Soup,
-    World,
+    Allele, AlleleId, AlleleStatus, Inspection, MutationSettings, Origin, Pattern, Pedigree, Rule,
+    Soup, World,
 };
 use std::fmt::Display;
 use wasm_bindgen::prelude::*;
@@ -121,9 +121,11 @@ impl WebWorld {
     /// The inspection of the Organism being followed, if any, packed as
     /// `[x, y, birth Generation, death Generation or -1 while it lives,
     /// Phenotype hue]` and then, for each of its two Alleles, `[shown as 1
-    /// or hidden as 0, lineage length]` and the lineage from the Allele back
-    /// to its Founding Allele as `[hue, dominance, origin Generation, status]`
-    /// per Allele, with status 0 living, 1 hidden and 2 extinct.
+    /// or hidden as 0, id high, id low, lineage length]` and the lineage from
+    /// the Allele back to its Founding Allele as `[hue, dominance, origin
+    /// Generation, status]` per Allele, with status 0 living, 1 hidden and 2
+    /// extinct. An Allele id is packed as the high and low 32 bits of the
+    /// number `carryingCells` takes.
     pub fn inspection(&self) -> Option<Vec<f64>> {
         self.world.inspection().as_ref().map(packed_inspection)
     }
@@ -168,10 +170,60 @@ impl WebWorld {
     }
 
     /// The census of living Alleles, packed as `[Generation, population]`
-    /// and then, per Allele carried by a live Cell in id order, `[hue,
-    /// dominance, copies, live Cells showing it, live Cells hiding it]`.
+    /// and then, per Allele carried by a live Cell in id order, `[id high, id
+    /// low, hue, dominance, copies, live Cells showing it, live Cells hiding
+    /// it]`, with ids packed as for `inspection`.
     pub fn census(&self) -> Vec<f64> {
         packed_census(&self.world)
+    }
+
+    /// The Allele Tree packed as, per retained Allele with each before its
+    /// descendants, `[id high, id low, source id high, source id low, hue,
+    /// dominance, origin Generation, Generation last carried in, status]`,
+    /// with ids and status packed as for `inspection` and the source id as
+    /// `-1, -1` for a Founding Allele.
+    #[wasm_bindgen(js_name = alleleTree)]
+    pub fn allele_tree(&self) -> Vec<f64> {
+        let mut packed = Vec::new();
+        for node in self.world.allele_tree() {
+            push_id(&mut packed, node.id);
+            match node.source {
+                Some(source) => push_id(&mut packed, source),
+                None => packed.extend([-1.0, -1.0]),
+            }
+            packed.extend([
+                node.allele.hue,
+                f64::from(node.allele.dominance),
+                node.origin as f64,
+                node.last_carried as f64,
+                packed_status(node.status),
+            ]);
+        }
+        packed
+    }
+
+    /// Writes the Carrier highlight of Allele `id` into `out`, one byte per
+    /// Cell in row-major order: 0 for a Cell not carrying it, 1 for one
+    /// showing it and 2 for a Carrier hiding it. Every Cell is 0 once the
+    /// World no longer retains Allele `id`.
+    #[wasm_bindgen(js_name = carryingCells)]
+    pub fn carrying_cells(&self, id: u64, out: &mut [u8]) -> Result<(), JsError> {
+        let cells = self.world.width() * self.world.height();
+        if out.len() != cells {
+            return Err(JsError::new(&format!(
+                "highlight buffer holds {} cells but the world has {cells}",
+                out.len()
+            )));
+        }
+        out.fill(0);
+        for cell in self
+            .world
+            .carrying_cells(AlleleId::from_bits(id))
+            .unwrap_or_default()
+        {
+            out[cell.y * self.world.width() + cell.x] = if cell.shown { 1 } else { 2 };
+        }
+        Ok(())
     }
 
     /// Number of live Cells at each Generation from 0 to the current one.
@@ -213,28 +265,39 @@ fn packed_inspection(inspection: &Inspection) -> Vec<f64> {
     ];
     for allele in &inspection.alleles {
         packed.push(f64::from(u8::from(allele.shown)));
+        push_id(&mut packed, allele.id);
         packed.push(allele.lineage.len() as f64);
         for node in &allele.lineage {
-            let status = match node.status {
-                AlleleStatus::Living => 0.0,
-                AlleleStatus::Hidden => 1.0,
-                AlleleStatus::Extinct => 2.0,
-            };
             packed.extend([
                 node.allele.hue,
                 f64::from(node.allele.dominance),
                 node.origin as f64,
-                status,
+                packed_status(node.status),
             ]);
         }
     }
     packed
 }
 
+/// Appends `id` as its high and low 32 bits.
+fn push_id(packed: &mut Vec<f64>, id: AlleleId) {
+    let bits = id.to_bits();
+    packed.extend([(bits >> 32) as f64, (bits & u64::from(u32::MAX)) as f64]);
+}
+
+fn packed_status(status: AlleleStatus) -> f64 {
+    match status {
+        AlleleStatus::Living => 0.0,
+        AlleleStatus::Hidden => 1.0,
+        AlleleStatus::Extinct => 2.0,
+    }
+}
+
 /// The census of `world` laid out as `WebWorld::census` documents.
 fn packed_census(world: &World) -> Vec<f64> {
     let mut packed = vec![world.generation() as f64, world.population() as f64];
     for line in world.living_alleles() {
+        push_id(&mut packed, line.id);
         packed.extend([
             line.allele.hue,
             f64::from(line.allele.dominance),

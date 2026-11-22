@@ -16,15 +16,15 @@
   } from './lib/camera.ts';
   import { Renderer } from './lib/renderer.ts';
   import { cellsAlong } from './lib/stroke.ts';
-  import type { CellPosition, Frame } from './protocol.ts';
+  import type { AlleleId, CellPosition, Frame, FrameBuffers } from './protocol.ts';
 
   interface Props {
     /** What pressing and dragging on the World does. */
     tool: Tool;
     /** Called once on mount with whether WebGL2 is available. */
     onsupport: (supported: boolean) => void;
-    /** Called with each frame's buffer once it has been drawn or superseded. */
-    onrelease: (phenotypes: Float32Array) => void;
+    /** Called with each frame's buffers once it has been drawn or superseded. */
+    onrelease: (buffers: FrameBuffers) => void;
     /** Called with the Cells a press or drag of the paint or erase tool passes over. */
     onstroke: (cells: CellPosition[]) => void;
     /** Called with the Cell the stamp tool is pressed on. */
@@ -37,9 +37,11 @@
     inspected: { x: number; y: number; dead: boolean } | null;
     /** Where the inspected Cell is on screen, or `null` while it is out of view or nothing is inspected. */
     anchor?: Rect | null;
+    /** The Allele whose Carrier highlight is drawn, with its hue, or `null` for none. */
+    highlighted: { id: AlleleId; hue: number } | null;
   }
 
-  let { tool, onsupport, onrelease, onstroke, onstamp, onstrokeend, oninspect, inspected, anchor = $bindable(null) }: Props = $props();
+  let { tool, onsupport, onrelease, onstroke, onstamp, onstrokeend, oninspect, inspected, anchor = $bindable(null), highlighted }: Props = $props();
 
   /** Wheel zoom per pixel of scroll. */
   const WHEEL_ZOOM = 0.002;
@@ -65,9 +67,13 @@
 
   /** Shows `frame` from the next animation frame on. */
   export function present(frame: Frame): void {
-    if (pending) onrelease(pending.phenotypes);
+    if (pending) release(pending);
     pending = frame;
     dirty = true;
+  }
+
+  function release(frame: Frame): void {
+    onrelease({ phenotypes: frame.phenotypes, carriers: frame.highlight?.carriers ?? null });
   }
 
   /** Zooms about the middle of the viewport. */
@@ -90,8 +96,9 @@
         world = { width: frame.width, height: frame.height };
         camera = null;
       }
-      renderer.upload(frame);
-      onrelease(frame.phenotypes);
+      const highlight = frame.highlight && highlighted && frame.highlight.allele === highlighted.id ? { hue: highlighted.hue, carriers: frame.highlight.carriers } : null;
+      renderer.upload({ ...frame, highlight });
+      release(frame);
     }
     if (!world || viewport.width === 0 || viewport.height === 0) return;
     camera ??= openingCamera(world, viewport);
