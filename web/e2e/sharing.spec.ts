@@ -80,8 +80,8 @@ test('the World is autosaved and restored on reload, still shareable', async ({ 
   const speed = page.getByRole('button', { name: /^Speed/ });
   await speed.click({ modifiers: ['Shift'] });
   await speed.click({ modifiers: ['Shift'] });
-  await expect(speed).toHaveText('Max');
-  await page.waitForTimeout(1500);
+  await expect(speed).toHaveText('4×');
+  await page.waitForTimeout(2500);
   await page.getByRole('button', { name: 'Pause' }).click();
   await page.waitForTimeout(300);
   const saved = await stats(page);

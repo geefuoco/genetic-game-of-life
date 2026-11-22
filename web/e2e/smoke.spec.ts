@@ -95,31 +95,31 @@ test('stepping while running pauses', async ({ page }) => {
   expect(await advanceOver(page, 500)).toBe(0);
 });
 
-test('cycles speed faster to Max and round, and slower with Shift+click or right-click', async ({ page }) => {
+test('cycles speed faster to 4× and round, and slower with Shift+click or right-click', async ({ page }) => {
   await open(page);
   const speed = page.getByRole('button', { name: /^Speed/ });
   await expect(speed).toHaveText('1×');
-  for (const label of ['2×', '4×', 'Max', '½×']) {
+  for (const label of ['2×', '4×', '½×']) {
     await speed.click();
     await expect(speed).toHaveText(label);
   }
   await speed.click({ modifiers: ['Shift'] });
-  await expect(speed).toHaveText('Max');
-  await speed.click({ button: 'right' });
   await expect(speed).toHaveText('4×');
+  await speed.click({ button: 'right' });
+  await expect(speed).toHaveText('2×');
 });
 
-test('runs far faster at Max than at 1×', async ({ page }) => {
+test('runs faster at 4× than at 1×', async ({ page }) => {
   await open(page);
   const normal = await advanceOver(page, 1000);
   const speed = page.getByRole('button', { name: /^Speed/ });
   await speed.click({ modifiers: ['Shift'] });
   await speed.click({ modifiers: ['Shift'] });
-  await expect(speed).toHaveText('Max');
-  const max = await advanceOver(page, 1000);
+  await expect(speed).toHaveText('4×');
+  const fast = await advanceOver(page, 1000);
   expect(normal).toBeGreaterThan(8);
   expect(normal).toBeLessThan(25);
-  expect(max).toBeGreaterThan(normal * 3);
+  expect(fast).toBeGreaterThan(normal * 2.5);
 });
 
 test('docks to the side and floats again, remembering the choice across reloads', async ({ page }) => {

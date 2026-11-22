@@ -14,7 +14,6 @@ export const SPEEDS: readonly Speed[] = [
   { label: '1×', rate: BASE_RATE },
   { label: '2×', rate: BASE_RATE * 2 },
   { label: '4×', rate: BASE_RATE * 4 },
-  { label: 'Max', rate: 'max' },
 ];
 
 /** Index into {@link SPEEDS} of the speed the page opens at. */

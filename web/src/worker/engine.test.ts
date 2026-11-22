@@ -264,14 +264,6 @@ describe('pacing', () => {
     expect(h.latest().generation).toBe(75);
   });
 
-  it('runs Max far faster than the fastest paced speed', () => {
-    const h = harness();
-    h.cost.msPerGeneration = 1;
-    start(h, 'max');
-    h.clock.advance(1000);
-    expect(h.latest().generation).toBeGreaterThan(500);
-  });
-
   it('runs a World too slow for its pace as fast as it can, without a backlog to catch up', () => {
     const h = harness();
     h.cost.msPerGeneration = 50;
@@ -304,17 +296,6 @@ describe('play, pause and step', () => {
     h.send({ type: 'play' });
     h.clock.advance(1000);
     expect(h.latest().generation).toBe(30);
-  });
-
-  it('stops Max on pause', () => {
-    const h = harness();
-    h.cost.msPerGeneration = 1;
-    start(h, 'max');
-    h.clock.advance(100);
-    h.send({ type: 'pause' });
-    const paused = h.latest().generation;
-    h.clock.advance(1000);
-    expect(h.latest().generation).toBe(paused);
   });
 
   it('steps exactly one Generation and pauses', () => {
@@ -722,7 +703,7 @@ describe('census', () => {
   it('follows the run at most four times a second, and always ends on the latest Generation', () => {
     const h = harness();
     h.cost.msPerGeneration = 1;
-    start(h, 'max', true);
+    start(h, 60, true);
     h.send({ type: 'watch-census', watching: true });
     h.clock.advance(1000);
     h.send({ type: 'pause' });
