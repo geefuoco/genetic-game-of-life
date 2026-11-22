@@ -116,7 +116,24 @@ export function lineAt(drawn: readonly AlleleLine[], layout: ChartLayout, point:
 
 /** The alleleLines in the order the keyboard steps through them: down the chart by hue, then by origin. */
 export function byHue(drawn: readonly AlleleLine[]): AlleleLine[] {
-  return [...drawn].sort((a, b) => a.hue - b.hue || a.origin - b.origin || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return [...drawn].sort(hueOrder);
+}
+
+function hueOrder(a: AlleleLine, b: AlleleLine): number {
+  return a.hue - b.hue || a.origin - b.origin || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+}
+
+/**
+ * Where the keyboard reader is in `order`, lines sorted by hue: on the line
+ * it is reading, or, once that line's Allele is pruned, on the line that now
+ * follows its place by hue, so the reader keeps its place.
+ */
+export function readerIndex(order: readonly AlleleLine[], reading: AlleleLine | null): number {
+  if (reading === null) return 0;
+  const at = order.findIndex((line) => line.id === reading.id);
+  if (at >= 0) return at;
+  const next = order.findIndex((line) => hueOrder(line, reading) > 0);
+  return next >= 0 ? next : Math.max(0, order.length - 1);
 }
 
 /** A line in words: its colour name, where it came from, and how it stands now. */

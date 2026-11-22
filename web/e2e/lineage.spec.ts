@@ -6,9 +6,26 @@ const DESCRIBED = /^\w+: (A founding colour gene|Mutated from \w+ at gen [\d,]+|
 
 const highlight = (page: Page) => page.getByRole('region', { name: 'Highlight' });
 
+/**
+ * A paused Soup from a fixed Seed, stepped `generations` times, so its
+ * Allele Tree is the same on every run and no Allele is pruned mid-test.
+ */
+async function seededSoup(page: Page, generations: number): Promise<void> {
+  await openPaused(page);
+  await page.getByRole('button', { name: 'Settings' }).click();
+  const settings = page.getByRole('dialog', { name: 'Settings' });
+  await settings.getByRole('textbox', { name: 'Seed' }).fill('42');
+  await settings.getByRole('button', { name: 'Start new soup' }).click();
+  await expect.poll(async () => (await stats(page)).generation).toBe(0);
+  await page.keyboard.press('Escape');
+  await expect(settings).toHaveCount(0);
+  const step = page.getByRole('button', { name: 'Step one generation' });
+  for (let i = 0; i < generations; i++) await step.click();
+  await expect.poll(async () => (await stats(page)).generation).toBe(generations);
+}
+
 test('the Lineage card opens from the dock, and the keyboard reads its colour genes and lights up one of them until Escape', async ({ page }) => {
-  await page.goto('./');
-  await expect.poll(async () => (await stats(page)).generation).toBeGreaterThan(2);
+  await seededSoup(page, 30);
   const toggle = page.getByRole('button', { name: 'Lineage' });
   await expect(toggle).toHaveAttribute('aria-expanded', 'false');
   await toggle.click();

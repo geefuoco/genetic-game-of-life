@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AlleleCensus, AlleleNode, Census } from '../protocol.ts';
-import { lineage, byHue, describeLine, lineAt, alleleLines, type AlleleLine } from './alleleTree.ts';
+import { lineage, byHue, describeLine, lineAt, alleleLines, readerIndex, type AlleleLine } from './alleleTree.ts';
 
 const GENERATION = 100;
 
@@ -74,6 +74,35 @@ describe('keyboard order', () => {
   it('runs down the chart by hue, older Alleles first at the same hue', () => {
     const tree = [node(0, 200, null, 0), node(1, 20, null, 0), node(2, 200, 0, 10), node(3, 90, 1, 3)];
     expect(ids(byHue(alleleLines(census(tree, [], 10))))).toEqual([1, 3, 0, 2]);
+  });
+});
+
+describe('the keyboard reader', () => {
+  const ordered = (tree: AlleleNode[]): AlleleLine[] => byHue(alleleLines(census(tree, [], 10)));
+  const before = ordered([node(0, 20, null, 0), node(1, 90, 0, 3), node(2, 200, null, 0), node(3, 200, 2, 10)]);
+  const at = (id: number): AlleleLine => {
+    const found = before.find((line) => line.id === BigInt(id));
+    if (!found) throw new Error(`no line ${id}`);
+    return found;
+  };
+
+  it('starts on the first line', () => {
+    expect(readerIndex(before, null)).toBe(0);
+  });
+
+  it('stays on the line it is reading as the chart redraws', () => {
+    const redrawn = ordered([node(0, 20, null, 0), node(4, 30, 0, 50), node(1, 90, 0, 3), node(2, 200, null, 0), node(3, 200, 2, 10)]);
+    expect(ids(redrawn)[readerIndex(redrawn, at(1))]).toBe(1);
+  });
+
+  it('moves to the next line by hue, not back to the first, when the line it is reading is pruned', () => {
+    const pruned = ordered([node(0, 20, null, 0), node(2, 200, null, 0), node(3, 200, 2, 10)]);
+    expect(ids(pruned)[readerIndex(pruned, at(1))]).toBe(2);
+  });
+
+  it('moves to the line before when the pruned line was the last by hue', () => {
+    const pruned = ordered([node(0, 20, null, 0), node(1, 90, 0, 3), node(2, 200, null, 0)]);
+    expect(ids(pruned)[readerIndex(pruned, at(3))]).toBe(2);
   });
 });
 
