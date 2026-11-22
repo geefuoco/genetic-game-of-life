@@ -3,7 +3,7 @@
 import type { AutosavedWorld } from './persistence.ts';
 
 /** How often the current World is autosaved, in ms. */
-export const AUTOSAVE_MS = 5000;
+export const AUTOSAVE_MS = 10_000;
 
 const DATABASE = 'genetic-life';
 const STORE = 'autosave';
