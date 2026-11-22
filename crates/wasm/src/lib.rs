@@ -1,5 +1,6 @@
-//! Thin wasm-bindgen layer over the core: a Soup World the web app's worker
-//! steps and reads Phenotypes from.
+//! Thin wasm-bindgen layer over the core: a World the web app's worker steps
+//! and reads Phenotypes from, started as a Soup, from a Share Link or from a
+//! Snapshot.
 
 use genetic_life_core::{
     Allele, AlleleId, AlleleStatus, Inspection, MutationSettings, Origin, Pattern, Pedigree, Rule,
@@ -37,6 +38,46 @@ impl WebWorld {
         };
         let world = soup.world().map_err(js_error)?;
         Ok(Self { world })
+    }
+
+    /// Resumes the World a Snapshot holds; fails with the core's explanation
+    /// if the Snapshot is corrupt or of a format this build does not read.
+    #[wasm_bindgen(js_name = fromSnapshot)]
+    pub fn from_snapshot(snapshot: &[u8]) -> Result<WebWorld, JsError> {
+        let world = World::from_snapshot(snapshot).map_err(js_error)?;
+        Ok(Self { world })
+    }
+
+    /// The Snapshot of the World as it stands.
+    pub fn snapshot(&self) -> Vec<u8> {
+        self.world.snapshot()
+    }
+
+    /// The running Rule in canonical B/S notation.
+    pub fn rule(&self) -> String {
+        self.world.rule().to_string()
+    }
+
+    /// Probability that each Allele passed on at a Birth mutates.
+    #[wasm_bindgen(js_name = mutationRate)]
+    pub fn mutation_rate(&self) -> f64 {
+        self.world.mutation().rate()
+    }
+
+    /// Largest hue shift of a mutant from its source Allele, in degrees.
+    #[wasm_bindgen(js_name = mutationMagnitude)]
+    pub fn mutation_magnitude(&self) -> f64 {
+        self.world.mutation().magnitude()
+    }
+
+    /// World width in Cells.
+    pub fn width(&self) -> usize {
+        self.world.width()
+    }
+
+    /// World height in Cells.
+    pub fn height(&self) -> usize {
+        self.world.height()
     }
 
     /// Switches to `rule`, given in B/S notation, from the next Generation on,
@@ -251,6 +292,98 @@ impl WebWorld {
             *slot = hue as f32;
         }
         Ok(())
+    }
+}
+
+/// A Soup's Seed, Rule and settings, as a Share Link carries them.
+#[wasm_bindgen]
+pub struct WebSoup {
+    soup: Soup,
+}
+
+#[wasm_bindgen]
+impl WebSoup {
+    /// Gathers a Soup's Seed, Rule (in B/S notation) and settings, with the
+    /// default Mutation settings until `setMutation` changes them; fails
+    /// with the core's explanation if the Rule is invalid.
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        seed: u64,
+        rule: &str,
+        width: usize,
+        height: usize,
+        density: f64,
+        founding_alleles: usize,
+    ) -> Result<WebSoup, JsError> {
+        let soup = Soup {
+            seed,
+            rule: Rule::parse(rule).map_err(js_error)?,
+            width,
+            height,
+            density,
+            founding_alleles,
+            mutation: MutationSettings::default(),
+        };
+        Ok(Self { soup })
+    }
+
+    /// Sets the Mutation settings; fails with the core's explanation if they
+    /// are out of range.
+    #[wasm_bindgen(js_name = setMutation)]
+    pub fn set_mutation(&mut self, rate: f64, magnitude: f64) -> Result<(), JsError> {
+        self.soup.mutation = MutationSettings::new(rate, magnitude).map_err(js_error)?;
+        Ok(())
+    }
+
+    /// Decodes a Share Link, alone or as a URL's fragment; fails with the
+    /// core's explanation if it is malformed, of an unknown version or out
+    /// of range.
+    #[wasm_bindgen(js_name = fromShareLink)]
+    pub fn from_share_link(link: &str) -> Result<WebSoup, JsError> {
+        let soup = Soup::from_share_link(link).map_err(js_error)?;
+        Ok(Self { soup })
+    }
+
+    /// The Share Link, to put in a URL's fragment.
+    #[wasm_bindgen(js_name = shareLink)]
+    pub fn share_link(&self) -> String {
+        self.soup.share_link()
+    }
+
+    pub fn seed(&self) -> u64 {
+        self.soup.seed
+    }
+
+    /// The Rule in canonical B/S notation.
+    pub fn rule(&self) -> String {
+        self.soup.rule.to_string()
+    }
+
+    pub fn width(&self) -> usize {
+        self.soup.width
+    }
+
+    pub fn height(&self) -> usize {
+        self.soup.height
+    }
+
+    pub fn density(&self) -> f64 {
+        self.soup.density
+    }
+
+    #[wasm_bindgen(js_name = foundingAlleles)]
+    pub fn founding_alleles(&self) -> usize {
+        self.soup.founding_alleles
+    }
+
+    #[wasm_bindgen(js_name = mutationRate)]
+    pub fn mutation_rate(&self) -> f64 {
+        self.soup.mutation.rate()
+    }
+
+    #[wasm_bindgen(js_name = mutationMagnitude)]
+    pub fn mutation_magnitude(&self) -> f64 {
+        self.soup.mutation.magnitude()
     }
 }
 

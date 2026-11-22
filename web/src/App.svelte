@@ -5,18 +5,22 @@
   import Dock from './Dock.svelte';
   import HighlightPill from './HighlightPill.svelte';
   import Inspector from './Inspector.svelte';
+  import Notice from './Notice.svelte';
   import Settings from './Settings.svelte';
+  import Share from './Share.svelte';
   import Stats from './Stats.svelte';
   import WorldView from './WorldView.svelte';
   import { DEFAULT_BRUSH, toolGenotype, type Brush as BrushSettings, type Tool } from './lib/brush.ts';
+  import { AUTOSAVE_MS, browserWorldStore } from './lib/autosave.ts';
   import { browserStorage, loadDocked, saveDocked } from './lib/dock.ts';
   import { keyAction, type KeyAction } from './lib/keys.ts';
   import type { NewSoup, RuleStatus, SoupDraft } from './lib/settings.ts';
   import { currentDevice, defaultPedigreeBudget, MAX_PEDIGREE_DEPTH, PEDIGREE_DEPTH, PEDIGREE_DEPTH_STEP } from './lib/pedigree.ts';
   import { DEFAULT_SPEED, SPEEDS, cycleSpeed, nudgeSpeed } from './lib/speed.ts';
   import { paletteCss } from './lib/palette.ts';
+  import { openingPlan, rejectionNotice, shareUrl, snapshotFileName, type Opening } from './lib/persistence.ts';
   import type { Rect } from './lib/camera.ts';
-  import type { AlleleId, Census, CellPosition, Frame, Inspection, MutationSettings, Pedigree, SoupSettings } from './protocol.ts';
+  import type { AlleleId, Census, CellPosition, Frame, Inspection, MutationSettings, Pedigree, SnapshotPurpose, SoupSettings, WorldSource } from './protocol.ts';
   import { Simulation } from './simulation.ts';
 
   /** The Soup the page opens on, apart from its random Seed: Conway's Life with the core's default Mutation. */
@@ -32,6 +36,8 @@
   const HINT_MS = 9000;
   /** Zoom factor of one press of a zoom button. */
   const ZOOM_STEP = 1.25;
+  /** What a visitor is told once a Snapshot they chose is running. */
+  const IMPORTED = "Snapshot imported. Ancestors restart from here: a snapshot doesn't keep the ones before it.";
 
   let docked = $state(loadDocked(browserStorage()));
   let running = $state(true);
@@ -75,6 +81,16 @@
   let dock: Dock;
   let popover: HTMLElement | undefined = $state();
   let simulation: Simulation | null = null;
+  const worldStore = browserWorldStore();
+  /** The ways to open the first World still to try, while none has opened. */
+  let opening: Opening[] = [];
+  /** Whether a World has opened, so a refused Share Link or Snapshot leaves one running. */
+  let opened = false;
+  /** Whether a frame has shown a change since the last autosave, so an unchanged World is not saved again. */
+  let unsaved = false;
+  /** The core's Share Link of the run the World is on, or `null` when none can reproduce it. */
+  let shareLink = $state<string | null>(null);
+  let notice = $state.raw<{ kind: 'info' | 'error'; text: string } | null>(null);
 
   const stats = $derived(`gen ${generation.toLocaleString()} · ${population.toLocaleString()} alive`);
   const brushColours = $derived([paletteCss(brush.first.hue), paletteCss(brush.second.hue)] as const);
@@ -93,6 +109,7 @@
   );
 
   function onFrame(frame: Frame): void {
+    unsaved = true;
     generation = frame.generation;
     population = frame.population;
     canUndo = frame.canUndo;
@@ -182,6 +199,72 @@
   function setMutation(next: MutationSettings): void {
     mutation = next;
     simulation?.send({ type: 'set-mutation', mutation: next });
+  }
+
+  /** Tries the next way to open the first World. */
+  function openNext(): void {
+    const next = opening.shift();
+    if (!next || !simulation) return;
+    const rate = SPEEDS[speed]!.rate;
+    if (next.from === 'link') simulation.send({ type: 'open-link', link: next.link, rate, running });
+    else if (next.from === 'autosave') simulation.send({ type: 'import', ...next.saved, source: 'autosave', rate, running });
+    else simulation.send({ type: 'start', soup: { ...OPENING_SOUP, seed: randomSeed() }, rate, running });
+  }
+
+  function clearAddressLink(): void {
+    if (location.hash !== '') history.replaceState(history.state, '', location.pathname + location.search);
+  }
+
+  /** Opens the Share Link in the address, if there is one, and takes it out of the address so a reload resumes the autosaved World. */
+  function openAddressLink(): void {
+    const link = location.hash.replace(/^#/, '');
+    if (link === '') return;
+    clearAddressLink();
+    simulation?.send({ type: 'open-link', link, rate: SPEEDS[speed]!.rate, running });
+  }
+
+  function onWorld(world: { source: WorldSource; rule: string; mutation: MutationSettings }): void {
+    opening = [];
+    opened = true;
+    rule = { running: world.rule, rejected: null };
+    mutation = world.mutation;
+    highlighted = null;
+    highlightCounts = null;
+    if (world.source === 'snapshot') notice = { kind: 'info', text: IMPORTED };
+    else if (notice?.kind === 'info') notice = null;
+  }
+
+  function onRejected(rejected: { source: Exclude<WorldSource, 'soup'>; message: string }): void {
+    if (rejected.source !== 'autosave') notice = { kind: 'error', text: rejectionNotice(rejected.source, rejected.message, opened) };
+    if (!opened) openNext();
+  }
+
+  function onSnapshot(saved: { purpose: SnapshotPurpose; snapshot: Uint8Array; generation: number; link: string | null }): void {
+    if (saved.purpose === 'autosave') {
+      void worldStore.save({ snapshot: saved.snapshot, link: saved.link });
+      return;
+    }
+    const url = URL.createObjectURL(new Blob([saved.snapshot as Uint8Array<ArrayBuffer>], { type: 'application/octet-stream' }));
+    const download = document.createElement('a');
+    download.href = url;
+    download.download = snapshotFileName(saved.generation);
+    download.click();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
+  function exportSnapshot(): void {
+    simulation?.send({ type: 'save', purpose: 'export' });
+  }
+
+  async function importSnapshot(file: File): Promise<void> {
+    const snapshot = new Uint8Array(await file.arrayBuffer());
+    simulation?.send({ type: 'import', snapshot, link: null, source: 'snapshot', rate: SPEEDS[speed]!.rate, running });
+  }
+
+  function autosave(): void {
+    if (!opened || !unsaved) return;
+    unsaved = false;
+    simulation?.send({ type: 'save', purpose: 'autosave' });
   }
 
   function newSoup(soup: NewSoup): void {
@@ -289,7 +372,6 @@
       problem = 'Genetic Life needs WebGL2, which this browser does not support or has turned off.';
       return;
     }
-    const seed = randomSeed();
     simulation = new Simulation({
       frame: onFrame,
       census: (next) => {
@@ -304,18 +386,41 @@
       ruleRejected: (rejected) => {
         rule = { running: rule.running, rejected };
       },
+      world: onWorld,
+      rejected: onRejected,
+      shareLink: (link) => {
+        shareLink = link;
+      },
+      snapshot: onSnapshot,
       error: (message) => {
         problem = message;
       },
     });
     simulation.send({ type: 'set-pedigree-budget', bytes: pedigreeBudget });
-    simulation.send({ type: 'start', soup: { ...OPENING_SOUP, seed }, rate: SPEEDS[speed]!.rate, running });
+    const fragment = location.hash;
+    void worldStore.load().then((saved) => {
+      opening = openingPlan(fragment, saved);
+      clearAddressLink();
+      openNext();
+    });
     watchCensus();
     const hint = setTimeout(() => {
       hintShown = false;
     }, HINT_MS);
+    const autosaving = setInterval(autosave, AUTOSAVE_MS);
+    const onHashChange = (): void => {
+      if (opened) openAddressLink();
+    };
+    const onVisibilityChange = (): void => {
+      if (document.visibilityState === 'hidden') autosave();
+    };
+    window.addEventListener('hashchange', onHashChange);
+    document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
       clearTimeout(hint);
+      clearInterval(autosaving);
+      window.removeEventListener('hashchange', onHashChange);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
       simulation?.dispose();
       simulation = null;
     };
@@ -370,6 +475,7 @@
     {randomSeed}
   />
   <Brush bind:brush />
+  <Share url={shareLink && shareUrl(location.href, shareLink)} onexport={exportSnapshot} onimport={importSnapshot} />
 {/snippet}
 
 {#if problem}
@@ -404,6 +510,9 @@
         highlighted={highlighted?.id ?? null}
         onhighlight={highlight}
       />
+    {/if}
+    {#if notice}
+      <Notice kind={notice.kind} text={notice.text} ondismiss={() => (notice = null)} />
     {/if}
     {#if highlighted}
       <HighlightPill hue={highlighted.hue} counts={highlightCounts} onclear={() => highlight(null)} />

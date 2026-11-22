@@ -4,6 +4,7 @@ import { initSync, WebWorld } from '../../wasm-pkg/genetic_life_wasm.js';
 import type { Census, Command, Frame, FrameBuffers, Rate, SoupSettings, WorkerEvent } from '../protocol.ts';
 import { RULE_PRESETS } from '../lib/settings.ts';
 import { Engine, type Clock, type EngineWorld } from './engine.ts';
+import { shareLinkOf, soupOfShareLink } from './soup.ts';
 
 beforeAll(() => {
   initSync({ module: readFileSync(new URL('../../wasm-pkg/genetic_life_wasm_bg.wasm', import.meta.url)) });
@@ -58,12 +59,19 @@ class FakeClock implements Clock {
   }
 }
 
+/** The events about where the World came from and how it is kept. */
+type Persistence = Extract<WorkerEvent, { type: 'world' | 'rejected' | 'share-link' | 'snapshot' }>;
+
+const PERSISTENCE: readonly WorkerEvent['type'][] = ['world', 'rejected', 'share-link', 'snapshot'];
+
 interface Harness {
   clock: FakeClock;
   frames: Frame[];
   errors: string[];
-  /** Events other than frames and errors, in order. */
-  notices: Exclude<WorkerEvent, Frame | { type: 'error' }>[];
+  /** Events other than frames, errors and {@link Persistence} events, in order. */
+  notices: Exclude<WorkerEvent, Frame | Persistence | { type: 'error' }>[];
+  /** {@link Persistence} events, in order. */
+  persistence: Persistence[];
   send(command: Command): void;
   /** Hands every held buffer back, as a page that keeps up would. */
   releaseAll(): void;
@@ -78,43 +86,51 @@ function harness(options: { keepUp?: boolean } = {}): Harness {
   const frames: Frame[] = [];
   const errors: string[] = [];
   const notices: Harness['notices'] = [];
+  const persistence: Persistence[] = [];
   const held: FrameBuffers[] = [];
   const cost = { msPerGeneration: 0 };
-  const createWorld = (soup: SoupSettings): EngineWorld => {
-    const world = createWebWorld(soup);
-    return {
-      step(generations) {
-        world.step(generations);
-        clock.time += cost.msPerGeneration * generations;
-      },
-      generation: () => world.generation(),
-      population: () => world.population(),
-      phenotypes: (out) => world.phenotypes(out),
-      setRule: (rule) => world.setRule(rule),
-      setMutation: (rate, magnitude) => world.setMutation(rate, magnitude),
-      paint: (x, y, genotype) => world.paint(x, y, genotype),
-      erase: (x, y) => world.erase(x, y),
-      stamp: (pattern, x, y, genotype) => world.stamp(pattern, x, y, genotype),
-      endStroke: () => world.endStroke(),
-      undo: () => world.undo(),
-      redo: () => world.redo(),
-      canUndo: () => world.canUndo(),
-      canRedo: () => world.canRedo(),
-      inspect: (x, y) => world.inspect(x, y),
-      inspection: () => world.inspection(),
-      stopInspecting: () => world.stopInspecting(),
-      pedigree: (depth) => world.pedigree(depth),
-      setPedigreeBudget: (bytes) => world.setPedigreeBudget(bytes),
-      census: () => world.census(),
-      alleleTree: () => world.alleleTree(),
-      carryingCells: (allele, out) => world.carryingCells(allele, out),
-      populationHistory: () => world.populationHistory(),
-      free: () => world.free(),
-    };
-  };
+  const adapt = (world: WebWorld): EngineWorld => ({
+    step(generations) {
+      world.step(generations);
+      clock.time += cost.msPerGeneration * generations;
+    },
+    generation: () => world.generation(),
+    population: () => world.population(),
+    width: () => world.width(),
+    height: () => world.height(),
+    phenotypes: (out) => world.phenotypes(out),
+    rule: () => world.rule(),
+    setRule: (rule) => world.setRule(rule),
+    mutationRate: () => world.mutationRate(),
+    mutationMagnitude: () => world.mutationMagnitude(),
+    setMutation: (rate, magnitude) => world.setMutation(rate, magnitude),
+    paint: (x, y, genotype) => world.paint(x, y, genotype),
+    erase: (x, y) => world.erase(x, y),
+    stamp: (pattern, x, y, genotype) => world.stamp(pattern, x, y, genotype),
+    endStroke: () => world.endStroke(),
+    undo: () => world.undo(),
+    redo: () => world.redo(),
+    canUndo: () => world.canUndo(),
+    canRedo: () => world.canRedo(),
+    inspect: (x, y) => world.inspect(x, y),
+    inspection: () => world.inspection(),
+    stopInspecting: () => world.stopInspecting(),
+    pedigree: (depth) => world.pedigree(depth),
+    setPedigreeBudget: (bytes) => world.setPedigreeBudget(bytes),
+    census: () => world.census(),
+    alleleTree: () => world.alleleTree(),
+    carryingCells: (allele, out) => world.carryingCells(allele, out),
+    populationHistory: () => world.populationHistory(),
+    snapshot: () => world.snapshot(),
+    free: () => world.free(),
+  });
   const onEvent = (event: WorkerEvent): void => {
     if (event.type === 'error') {
       errors.push(event.message);
+      return;
+    }
+    if (isPersistence(event)) {
+      persistence.push(event);
       return;
     }
     if (event.type !== 'frame') {
@@ -135,12 +151,20 @@ function harness(options: { keepUp?: boolean } = {}): Harness {
       if (next) engine.handle({ type: 'release', ...next });
     }, 0);
   };
-  const engine = new Engine({ createWorld, clock, send: onEvent });
+  const engine = new Engine({
+    createWorld: (soup) => adapt(createWebWorld(soup)),
+    importWorld: (snapshot) => adapt(WebWorld.fromSnapshot(snapshot)),
+    shareLink: shareLinkOf,
+    decodeShareLink: soupOfShareLink,
+    clock,
+    send: onEvent,
+  });
   return {
     clock,
     frames,
     errors,
     notices,
+    persistence,
     cost,
     send: (command) => engine.handle(command),
     releaseAll() {
@@ -152,6 +176,15 @@ function harness(options: { keepUp?: boolean } = {}): Harness {
       return frame;
     },
   };
+}
+
+function isPersistence(event: WorkerEvent): event is Persistence {
+  return PERSISTENCE.includes(event.type);
+}
+
+/** The Share Links sent, in order. */
+function links(h: Harness): (string | null)[] {
+  return h.persistence.flatMap((event) => (event.type === 'share-link' ? [event.link] : []));
 }
 
 function start(h: Harness, rate: Rate = 15, running = true, soup = SOUP): void {
@@ -722,5 +755,178 @@ describe('census', () => {
     h.send({ type: 'paint', cells: [[1, 1]], genotype: [ORANGE, ORANGE] });
     start(h, 15, false, { ...EMPTY, width: 16, height: 16 });
     expect(latestCensus(h)).toMatchObject({ generation: 0, population: 0, alleles: [] });
+  });
+});
+
+describe('Share Links', () => {
+  /** The core's Share Link of {@link SOUP}. */
+  const SOUP_LINK = 'v=1&seed=42&rule=B3/S23&width=160&height=160&density=0.3&alleles=8&mutation-rate=0.01&mutation-magnitude=30';
+
+  it('are sent for a new Soup', () => {
+    const h = harness();
+    start(h, 15, false);
+    expect(links(h)).toEqual([SOUP_LINK]);
+  });
+
+  it('start exactly the run of the Soup they describe', () => {
+    const h = harness();
+    h.send({ type: 'open-link', link: `https://example.com/app/#${SOUP_LINK}`, rate: 15, running: true });
+    h.clock.advance(2000);
+    const frame = h.latest();
+    expect(frame.generation).toBe(30);
+    expect(frame.phenotypes).toEqual(referencePhenotypes(SOUP, 30));
+    expect(h.persistence).toContainEqual({ type: 'world', source: 'link', rule: 'B3/S23', mutation: { rate: 0.01, magnitude: 30 } });
+    expect(links(h)).toEqual([SOUP_LINK]);
+  });
+
+  it('carry the Rule and Mutation settings into the run', () => {
+    const h = harness();
+    const link = 'v=1&seed=7&rule=B36/S23&width=64&height=48&density=0.5&alleles=3&mutation-rate=0.2&mutation-magnitude=90';
+    h.send({ type: 'open-link', link, rate: 15, running: false });
+    expect(h.persistence[0]).toEqual({ type: 'world', source: 'link', rule: 'B36/S23', mutation: { rate: 0.2, magnitude: 90 } });
+    h.send({ type: 'step' });
+    const soup: SoupSettings = { seed: 7n, rule: 'B36/S23', width: 64, height: 48, density: 0.5, foundingAlleles: 3, mutation: { rate: 0.2, magnitude: 90 } };
+    expect(h.latest().phenotypes).toEqual(referencePhenotypes(soup, 1));
+  });
+
+  it('that the core cannot decode are rejected with its explanation, leaving the World running as it was', () => {
+    const h = harness();
+    start(h);
+    h.clock.advance(1000);
+    h.send({ type: 'open-link', link: SOUP_LINK.replace('v=1', 'v=9'), rate: 15, running: true });
+    h.send({ type: 'open-link', link: SOUP_LINK.replace('width=160', 'width=8'), rate: 15, running: true });
+    h.clock.advance(1000);
+    expect(h.persistence.filter((event) => event.type === 'rejected')).toEqual([
+      { type: 'rejected', source: 'link', message: 'share link version \'9\' is not supported, this build reads version 1' },
+      { type: 'rejected', source: 'link', message: expect.stringMatching(/^share link world settings are invalid: .*8x160/) },
+    ]);
+    expect(h.latest().generation).toBe(30);
+    expect(h.latest().phenotypes).toEqual(referencePhenotypes(SOUP, 30));
+    expect(links(h)).toEqual([SOUP_LINK]);
+  });
+
+  it('stop describing the World once it is edited', () => {
+    const h = harness();
+    start(h, 15, false);
+    h.send({ type: 'paint', cells: [[1, 1]], genotype: [{ hue: 40, dominance: 2 }, { hue: 40, dominance: 2 }] });
+    h.send({ type: 'end-stroke' });
+    h.send({ type: 'undo' });
+    expect(links(h)).toEqual([SOUP_LINK, null]);
+  });
+
+  it('follow a Rule or Mutation change at Generation 0', () => {
+    const h = harness();
+    start(h, 15, false);
+    h.send({ type: 'set-rule', rule: 'b63/s32' });
+    h.send({ type: 'set-mutation', mutation: { rate: 0.05, magnitude: 30 } });
+    expect(links(h)).toEqual([
+      SOUP_LINK,
+      SOUP_LINK.replace('B3/S23', 'B36/S23'),
+      SOUP_LINK.replace('B3/S23', 'B36/S23').replace('mutation-rate=0.01', 'mutation-rate=0.05'),
+    ]);
+  });
+
+  it('stop describing the run once its Rule or Mutation changes after Generation 0, but not for an unchanged setting', () => {
+    const rule = harness();
+    start(rule, 15, false);
+    rule.send({ type: 'step' });
+    rule.send({ type: 'set-rule', rule: 'B3/S23' });
+    rule.send({ type: 'set-mutation', mutation: { rate: 0.01, magnitude: 30 } });
+    expect(links(rule)).toEqual([SOUP_LINK]);
+    rule.send({ type: 'set-rule', rule: 'B36/S23' });
+    expect(links(rule)).toEqual([SOUP_LINK, null]);
+
+    const mutation = harness();
+    start(mutation, 15, false);
+    mutation.send({ type: 'step' });
+    mutation.send({ type: 'set-mutation', mutation: { rate: 0.01, magnitude: 45 } });
+    expect(links(mutation)).toEqual([SOUP_LINK, null]);
+  });
+});
+
+describe('Snapshots', () => {
+  const snapshots = (h: Harness): Extract<Persistence, { type: 'snapshot' }>[] =>
+    h.persistence.flatMap((event) => (event.type === 'snapshot' ? [event] : []));
+
+  function saved(h: Harness, purpose: 'export' | 'autosave' = 'export'): Extract<Persistence, { type: 'snapshot' }> {
+    h.send({ type: 'save', purpose });
+    const snapshot = snapshots(h).at(-1);
+    if (!snapshot) throw new Error('no snapshot sent');
+    return snapshot;
+  }
+
+  it('resume the run exactly where it was saved', () => {
+    const h = harness();
+    start(h);
+    h.clock.advance(1000);
+    h.send({ type: 'pause' });
+    const snapshot = saved(h);
+    expect(snapshot).toMatchObject({ purpose: 'export', generation: 15 });
+
+    const resumed = harness();
+    resumed.send({ type: 'import', snapshot: snapshot.snapshot, link: null, source: 'snapshot', rate: 15, running: true });
+    expect(resumed.latest().generation).toBe(15);
+    resumed.clock.advance(1000);
+    expect(resumed.latest().generation).toBe(30);
+    expect(resumed.latest().phenotypes).toEqual(referencePhenotypes(SOUP, 30));
+  });
+
+  it('bring back the Rule and Mutation settings of the run', () => {
+    const h = harness();
+    start(h, 15, false, { ...SOUP, rule: LIFE_WITHOUT_DEATH, mutation: { rate: 0.2, magnitude: 90 } });
+    const snapshot = saved(h).snapshot;
+    const resumed = harness();
+    resumed.send({ type: 'import', snapshot, link: null, source: 'snapshot', rate: 15, running: false });
+    expect(resumed.persistence[0]).toEqual({ type: 'world', source: 'snapshot', rule: LIFE_WITHOUT_DEATH, mutation: { rate: 0.2, magnitude: 90 } });
+  });
+
+  it('resume an edited World, which no Share Link describes', () => {
+    const h = harness();
+    start(h, 15, false, { ...SOUP, width: 32, height: 32, density: 0 });
+    h.send({ type: 'paint', cells: [[3, 4], [4, 4], [5, 4]], genotype: [{ hue: 40, dominance: 2 }, { hue: 230, dominance: 0 }] });
+    const snapshot = saved(h);
+    expect(snapshot.link).toBeNull();
+    const resumed = harness();
+    resumed.send({ type: 'import', snapshot: snapshot.snapshot, link: null, source: 'snapshot', rate: 15, running: false });
+    resumed.send({ type: 'step' });
+    expect(resumed.latest().population).toBe(3);
+    expect(resumed.latest().phenotypes.filter((hue) => hue >= 0)).toHaveLength(3);
+  });
+
+  it('carry the Share Link of the run, so an autosaved run stays shareable once restored', () => {
+    const h = harness();
+    start(h, 15, false);
+    h.send({ type: 'step' });
+    const snapshot = saved(h, 'autosave');
+    expect(snapshot.purpose).toBe('autosave');
+    expect(snapshot.link).toBe(links(h)[0]);
+
+    const restored = harness();
+    restored.send({ type: 'import', snapshot: snapshot.snapshot, link: snapshot.link, source: 'autosave', rate: 15, running: false });
+    expect(links(restored)).toEqual([snapshot.link]);
+    const imported = harness();
+    imported.send({ type: 'import', snapshot: snapshot.snapshot, link: null, source: 'snapshot', rate: 15, running: false });
+    expect(links(imported)).toEqual([]);
+  });
+
+  it('that are corrupt or of an unknown version are rejected with the core explanation, leaving the World running as it was', () => {
+    const h = harness();
+    start(h);
+    h.clock.advance(1000);
+    const snapshot = saved(h).snapshot;
+    const newer = snapshot.slice();
+    newer[4] = 99;
+    const corrupt = snapshot.slice(0, snapshot.length - 8);
+    for (const bad of [new TextEncoder().encode('not a snapshot'), newer, corrupt]) {
+      h.send({ type: 'import', snapshot: bad, link: null, source: 'snapshot', rate: 15, running: true });
+    }
+    h.clock.advance(1000);
+    expect(h.persistence.filter((event) => event.type === 'rejected')).toEqual([
+      { type: 'rejected', source: 'snapshot', message: 'not a snapshot: the data does not start with GGLS' },
+      { type: 'rejected', source: 'snapshot', message: 'snapshot format version 99 is not supported, this build reads version 4' },
+      { type: 'rejected', source: 'snapshot', message: expect.stringMatching(/^snapshot data is (corrupt|truncated)/) },
+    ]);
+    expect(h.latest().generation).toBe(30);
+    expect(h.latest().phenotypes).toEqual(referencePhenotypes(SOUP, 30));
   });
 });

@@ -1,6 +1,7 @@
 import init, { WebWorld } from '../../wasm-pkg/genetic_life_wasm.js';
 import type { Command, WorkerEvent } from '../protocol.ts';
 import { Engine } from './engine.ts';
+import { shareLinkOf, soupOfShareLink } from './soup.ts';
 
 const send = (event: WorkerEvent, transfer: Transferable[]): void => {
   self.postMessage(event, { transfer });
@@ -10,6 +11,9 @@ const engineReady = init().then(
   () =>
     new Engine({
       createWorld: (soup) => new WebWorld(soup.seed, soup.width, soup.height, soup.density, soup.foundingAlleles),
+      importWorld: (snapshot) => WebWorld.fromSnapshot(snapshot),
+      shareLink: shareLinkOf,
+      decodeShareLink: soupOfShareLink,
       clock: {
         now: () => performance.now(),
         setTimeout: (run, ms) => self.setTimeout(run, ms),

@@ -13,9 +13,12 @@ import type {
   Pedigree,
   PedigreeOrigin,
   PedigreeParent,
+  MutationSettings,
   Rate,
+  SnapshotPurpose,
   SoupSettings,
   WorkerEvent,
+  WorldSource,
 } from '../protocol.ts';
 
 /** The World as the engine drives it; in the worker, the WASM `WebWorld`. */
@@ -23,11 +26,19 @@ export interface EngineWorld {
   step(generations: number): void;
   generation(): number;
   population(): number;
+  width(): number;
+  height(): number;
   phenotypes(out: Float32Array): void;
+  /** The running Rule in canonical B/S notation. */
+  rule(): string;
   /** Switches to a Rule in B/S notation and returns it in canonical notation; throws the core's explanation if it is invalid. */
   setRule(rule: string): string;
   /** Switches the Mutation settings; throws the core's explanation if they are out of range. */
   setMutation(rate: number, magnitude: number): void;
+  /** Probability that each Allele passed on mutates. */
+  mutationRate(): number;
+  /** Largest hue shift of a mutant, in degrees. */
+  mutationMagnitude(): number;
   /** Paints a Cell with a Genotype given as `[hue, dominance, hue, dominance]`, in the open stroke. */
   paint(x: number, y: number, genotype: Float64Array): void;
   /** Erases a Cell, in the open stroke. */
@@ -56,6 +67,8 @@ export interface EngineWorld {
   carryingCells(allele: AlleleId, out: Uint8Array): void;
   /** The population at each Generation from 0 to the current one. */
   populationHistory(): Uint32Array;
+  /** The core's Snapshot of the World as it stands. */
+  snapshot(): Uint8Array;
   free(): void;
 }
 
@@ -69,6 +82,12 @@ export interface Clock {
 export interface EngineOptions {
   /** The World a Soup describes; the engine applies its Rule and Mutation settings after creating it. */
   createWorld(soup: SoupSettings): EngineWorld;
+  /** The World a Snapshot holds; throws the core's explanation if it cannot be imported. */
+  importWorld(snapshot: Uint8Array): EngineWorld;
+  /** The core's Share Link of a Soup. */
+  shareLink(soup: SoupSettings): string;
+  /** The Soup a Share Link describes; throws the core's explanation if the core cannot decode it. */
+  decodeShareLink(link: string): SoupSettings;
   clock: Clock;
   send(event: WorkerEvent, transfer: Transferable[]): void;
 }
@@ -112,6 +131,10 @@ export class Engine {
   private censusSentAt = -Infinity;
   /** The timer for a census held back so censuses stay {@link CENSUS_MS} apart. */
   private censusTimer: number | null = null;
+  /** The Soup whose run the World is, while a Share Link can reproduce it. */
+  private origin: SoupSettings | null = null;
+  /** The Share Link last sent, so it is only sent again when it changes. */
+  private sentLink: string | null = null;
 
   constructor(options: EngineOptions) {
     this.options = options;
@@ -120,7 +143,16 @@ export class Engine {
   handle(command: Command): void {
     switch (command.type) {
       case 'start':
-        this.start(command.soup, command.rate, command.running);
+        this.install(() => this.createSoup(command.soup), { source: 'soup', origin: command.soup, rate: command.rate, running: command.running });
+        break;
+      case 'open-link':
+        this.openLink(command.link, command.rate, command.running);
+        break;
+      case 'import':
+        this.importSnapshot(command);
+        break;
+      case 'save':
+        this.save(command.purpose);
         break;
       case 'play':
         if (!this.running) {
@@ -146,22 +178,22 @@ export class Engine {
         this.setRule(command.rule);
         break;
       case 'set-mutation':
-        this.world?.setMutation(command.mutation.rate, command.mutation.magnitude);
+        this.setMutation(command.mutation);
         break;
       case 'paint': {
         const genotype = packed(command.genotype);
-        this.change((world) => {
+        this.edit((world) => {
           for (const [x, y] of command.cells) world.paint(x, y, genotype);
         });
         break;
       }
       case 'erase':
-        this.change((world) => {
+        this.edit((world) => {
           for (const [x, y] of command.cells) world.erase(x, y);
         });
         break;
       case 'stamp':
-        this.change((world) => world.stamp(command.pattern, command.x, command.y, packed(command.genotype)));
+        this.edit((world) => world.stamp(command.pattern, command.x, command.y, packed(command.genotype)));
         break;
       case 'end-stroke':
         this.world?.endStroke();
@@ -204,51 +236,145 @@ export class Engine {
     }
   }
 
-  private start(soup: SoupSettings, rate: Rate, running: boolean): void {
+  /** A Soup's World with its Rule and Mutation settings applied. */
+  private createSoup(soup: SoupSettings): EngineWorld {
+    const world = this.options.createWorld(soup);
+    try {
+      world.setRule(soup.rule);
+      world.setMutation(soup.mutation.rate, soup.mutation.magnitude);
+    } catch (error) {
+      world.free();
+      throw error;
+    }
+    return world;
+  }
+
+  private openLink(link: string, rate: Rate, running: boolean): void {
+    let soup: SoupSettings;
+    try {
+      soup = this.options.decodeShareLink(link);
+    } catch (error) {
+      this.options.send({ type: 'rejected', source: 'link', message: messageOf(error) }, []);
+      return;
+    }
+    this.install(() => this.createSoup(soup), { source: 'link', origin: soup, rate, running });
+  }
+
+  private importSnapshot(command: Extract<Command, { type: 'import' }>): void {
+    this.install(() => this.options.importWorld(command.snapshot), {
+      source: command.source,
+      origin: this.soupOf(command.link),
+      rate: command.rate,
+      running: command.running,
+    });
+  }
+
+  /** The Soup a Share Link that came with a Snapshot describes, or `null` if there is none or it cannot be decoded. */
+  private soupOf(link: string | null): SoupSettings | null {
+    if (link === null) return null;
+    try {
+      return this.options.decodeShareLink(link);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Replaces the World with the one `create` makes, once it is ready. If `create` throws, the World is left as it was
+   * and the failure is reported: as an error for a new Soup, as a rejection for anything the visitor brought in.
+   */
+  private install(create: () => EngineWorld, next: { source: WorldSource; origin: SoupSettings | null; rate: Rate; running: boolean }): void {
+    let world: EngineWorld | null = null;
+    try {
+      world = create();
+      if (this.pedigreeBudget !== null) world.setPedigreeBudget(this.pedigreeBudget);
+    } catch (error) {
+      world?.free();
+      const message = messageOf(error);
+      this.options.send(next.source === 'soup' ? { type: 'error', message } : { type: 'rejected', source: next.source, message }, []);
+      return;
+    }
     this.pause();
     this.world?.free();
-    this.world = null;
-    this.cells = 0;
+    this.world = world;
     this.free = [];
     this.freeCarriers = [];
     this.highlighted = null;
     this.framePending = false;
     this.cancelCensusTimer();
     this.censusSentAt = -Infinity;
-    let world: EngineWorld | null = null;
-    try {
-      world = this.options.createWorld(soup);
-      world.setRule(soup.rule);
-      world.setMutation(soup.mutation.rate, soup.mutation.magnitude);
-      if (this.pedigreeBudget !== null) world.setPedigreeBudget(this.pedigreeBudget);
-    } catch (error) {
-      world?.free();
-      this.options.send({ type: 'error', message: messageOf(error) }, []);
-      return;
-    }
-    this.world = world;
-    this.width = soup.width;
-    this.height = soup.height;
-    this.cells = soup.width * soup.height;
+    this.width = world.width();
+    this.height = world.height();
+    this.cells = this.width * this.height;
     this.free = Array.from({ length: BUFFERS }, () => new Float32Array(this.cells));
-    this.rate = rate;
+    this.rate = next.rate;
+    this.options.send({ type: 'world', source: next.source, rule: world.rule(), mutation: mutationOf(world) }, []);
+    this.setOrigin(next.origin && { ...next.origin, rule: world.rule(), mutation: mutationOf(world) });
     this.publish();
-    if (running) {
+    if (next.running) {
       this.running = true;
       this.restartPace();
     }
   }
 
+  /** Records the Soup whose run the World is, or `null` once a Share Link cannot reproduce it, and sends a changed Share Link. */
+  private setOrigin(origin: SoupSettings | null): void {
+    this.origin = origin;
+    let link: string | null = null;
+    if (origin) {
+      try {
+        link = this.options.shareLink(origin);
+      } catch {
+        this.origin = null;
+      }
+    }
+    if (link === this.sentLink) return;
+    this.sentLink = link;
+    this.options.send({ type: 'share-link', link }, []);
+  }
+
+  /** Keeps the Share Link through a change of the Rule or Mutation settings at Generation 0, and drops it after: a Share Link only describes how a run starts. */
+  private settingChanged(world: EngineWorld): void {
+    if (!this.origin) return;
+    const { rule, mutation } = this.origin;
+    const current = mutationOf(world);
+    if (rule === world.rule() && mutation.rate === current.rate && mutation.magnitude === current.magnitude) return;
+    this.setOrigin(world.generation() === 0 ? { ...this.origin, rule: world.rule(), mutation: current } : null);
+  }
+
   private setRule(rule: string): void {
-    if (!this.world) return;
+    const world = this.world;
+    if (!world) return;
     let running: string;
     try {
-      running = this.world.setRule(rule);
+      running = world.setRule(rule);
     } catch (error) {
       this.options.send({ type: 'rule-rejected', rule, message: messageOf(error) }, []);
       return;
     }
     this.options.send({ type: 'rule', rule: running }, []);
+    this.settingChanged(world);
+  }
+
+  private setMutation(mutation: MutationSettings): void {
+    const world = this.world;
+    if (!world) return;
+    world.setMutation(mutation.rate, mutation.magnitude);
+    this.settingChanged(world);
+  }
+
+  /** Edits the World as {@link change} does; a Share Link cannot reproduce an edited World. */
+  private edit(apply: (world: EngineWorld) => void): void {
+    if (!this.world) return;
+    this.setOrigin(null);
+    this.change(apply);
+  }
+
+  private save(purpose: SnapshotPurpose): void {
+    const world = this.world;
+    if (!world) return;
+    const snapshot = world.snapshot();
+    this.options.send({ type: 'snapshot', purpose, snapshot, generation: world.generation(), link: this.sentLink }, [snapshot.buffer]);
   }
 
   /** Changes the World, or what it inspects, between Generations and shows the result, reporting a change the core refuses. */
@@ -409,6 +535,10 @@ export class Engine {
     }
     return { allele: this.highlighted, carriers, shown, hidden };
   }
+}
+
+function mutationOf(world: EngineWorld): MutationSettings {
+  return { rate: world.mutationRate(), magnitude: world.mutationMagnitude() };
 }
 
 /** A Genotype as the World takes it: `[hue, dominance, hue, dominance]`. */
