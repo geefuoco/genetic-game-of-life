@@ -73,10 +73,10 @@ impl InspectedOrganism {
             shown,
             lineage: self.lineages[i]
                 .iter()
-                .map(|then| {
-                    node(then.id).unwrap_or(AlleleNode {
+                .map(|stored| {
+                    node(stored.id).unwrap_or(AlleleNode {
                         status: AlleleStatus::Extinct,
-                        ..*then
+                        ..*stored
                     })
                 })
                 .collect(),

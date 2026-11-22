@@ -2,7 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { stats } from './stats.ts';
 import { centreOf, dragRow, openPaused } from './world.ts';
 
-const DESCRIBED = /^\w+: (A founding colour gene|Mutated from \w+ at gen [\d,]+|Painted in at gen [\d,]+)\. ([\d,]+% of colour genes, (shown by [\d,]+ cells|hidden everywhere)|Died out after gen [\d,]+)\.( Highlighted\.)?$/;
+const DESCRIBED = /^\w+: (A founding colour gene|Mutated from \w+ at gen [\d,]+|Added at gen [\d,]+)\. ([\d,]+% of colour genes, (shown by [\d,]+ cells|hidden everywhere)|Died out after gen [\d,]+)\.( Highlighted\.)?$/;
 
 const highlight = (page: Page) => page.getByRole('region', { name: 'Highlight' });
 

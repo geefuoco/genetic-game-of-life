@@ -204,10 +204,10 @@ impl WebWorld {
 
     /// Writes the Carrier highlight of Allele `id` into `out`, one byte per
     /// Cell in row-major order: 0 for a Cell not carrying it, 1 for one
-    /// showing it and 2 for a Carrier hiding it. Returns whether the World
-    /// retains Allele `id`; when it does not, every Cell is 0.
+    /// showing it and 2 for a Carrier hiding it. Every Cell is 0 once the
+    /// World no longer retains Allele `id`.
     #[wasm_bindgen(js_name = carryingCells)]
-    pub fn carrying_cells(&self, id: u64, out: &mut [u8]) -> Result<bool, JsError> {
+    pub fn carrying_cells(&self, id: u64, out: &mut [u8]) -> Result<(), JsError> {
         let cells = self.world.width() * self.world.height();
         if out.len() != cells {
             return Err(JsError::new(&format!(
@@ -216,13 +216,14 @@ impl WebWorld {
             )));
         }
         out.fill(0);
-        let Some(carrying) = self.world.carrying_cells(AlleleId::from_bits(id)) else {
-            return Ok(false);
-        };
-        for cell in carrying {
+        for cell in self
+            .world
+            .carrying_cells(AlleleId::from_bits(id))
+            .unwrap_or_default()
+        {
             out[cell.y * self.world.width() + cell.x] = if cell.shown { 1 } else { 2 };
         }
-        Ok(true)
+        Ok(())
     }
 
     /// Number of live Cells at each Generation from 0 to the current one.

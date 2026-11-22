@@ -16,8 +16,8 @@
 //!   Allele and 1 for an Allele that mutated from another, followed in that
 //!   case by the slot it mutated from, `u32`, and then its origin
 //!   Generation, `u64`, and the latest Generation a live Cell carried it in,
-//!   `u64`, from its origin to the Generation; then the free slot count, `u32`, and the free slots,
-//!   `u32` each, in the order they were freed
+//!   `u64`, from its origin to the Generation; then the free slot count,
+//!   `u32`, and the free slots, `u32` each, in the order they were freed
 //! - live Cell count, `u32`; per live Cell, in row-major order, its row-major
 //!   index and its two Allele slots, `u32` each, then its Organism's Birth
 //!   Generation, `u64`, at most the Generation

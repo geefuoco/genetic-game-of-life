@@ -160,7 +160,19 @@ export type Command =
   | { type: 'watch-census'; watching: boolean }
   /** Puts the Carrier highlight of an Allele in the frames, or takes it out for `null`. */
   | { type: 'highlight'; allele: AlleleId | null }
-  | { type: 'release'; phenotypes: Float32Array; carriers: Uint8Array | null };
+  /** Hands a frame's buffers back to the worker once the page has drawn them. */
+  | ({ type: 'release' } & FrameBuffers);
+
+/** The buffers a frame lends the page: its Phenotypes, and its Carrier highlight if it has one. */
+export interface FrameBuffers {
+  phenotypes: Float32Array;
+  carriers: Uint8Array | null;
+}
+
+/** The underlying buffers of `buffers`, to transfer rather than copy. */
+export function transferable(buffers: FrameBuffers): Transferable[] {
+  return buffers.carriers ? [buffers.phenotypes.buffer, buffers.carriers.buffer] : [buffers.phenotypes.buffer];
+}
 
 /** How a Cell stands in a Carrier highlight, by the number {@link Highlight.carriers} holds for it. */
 export const CARRYING = { none: 0, shows: 1, hides: 2 } as const;

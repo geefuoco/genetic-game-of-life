@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ancestry, byHue, chartX, chartY, CHART_INSET, describeLineage, lineageAt, lineages, type ChartLayout, type Lineage } from './lib/alleleTree.ts';
+  import { alleleLines, byHue, chartX, chartY, CHART_INSET, describeLine, lineAt, lineage, type AlleleLine, type ChartLayout } from './lib/alleleTree.ts';
   import { capitalised } from './lib/colours.ts';
   import { paletteCss } from './lib/palette.ts';
   import type { AlleleId, Census } from './protocol.ts';
@@ -10,8 +10,8 @@
     height: number;
     /** The Allele whose Carrier highlight is shown, if any. */
     highlighted: AlleleId | null;
-    /** Called to highlight a lineage's Allele, or to clear the highlight with `null`. */
-    onhighlight: (lineage: Lineage | null) => void;
+    /** Called to highlight a line's Allele, or to clear the highlight with `null`. */
+    onhighlight: (line: AlleleLine | null) => void;
   }
 
   let { census, height, highlighted, onhighlight }: Props = $props();
@@ -25,26 +25,26 @@
   let canvas: HTMLCanvasElement;
   let width = $state(0);
   let hovered = $state<{ id: AlleleId; x: number; y: number } | null>(null);
-  /** The lineage the keyboard reader is on, while it has focus. */
+  /** The Allele the keyboard reader is on, while it has focus. */
   let reading = $state<AlleleId | null>(null);
 
-  const drawn = $derived(lineages(census));
+  const drawn = $derived(alleleLines(census));
   const order = $derived(byHue(drawn));
   const layout = $derived<ChartLayout>({ width, height, generation: census.generation });
-  const byId = $derived(new Map(drawn.map((lineage) => [lineage.id, lineage])));
-  const readIndex = $derived(Math.max(0, order.findIndex((lineage) => lineage.id === reading)));
+  const byId = $derived(new Map(drawn.map((line) => [line.id, line])));
+  const readIndex = $derived(Math.max(0, order.findIndex((line) => line.id === reading)));
   const tip = $derived.by(() => {
     if (hovered) {
-      const lineage = byId.get(hovered.id);
-      return lineage ? { lineage, x: hovered.x, y: hovered.y } : null;
+      const line = byId.get(hovered.id);
+      return line ? { line, x: hovered.x, y: hovered.y } : null;
     }
-    const lineage = reading === null ? undefined : byId.get(reading);
-    return lineage ? { lineage, x: chartX(layout, lineage.lastCarried), y: chartY(layout, lineage.hue) } : null;
+    const line = reading === null ? undefined : byId.get(reading);
+    return line ? { line, x: chartX(layout, line.lastCarried), y: chartY(layout, line.hue) } : null;
   });
   const counts = $derived({
-    living: drawn.filter((lineage) => lineage.status === 'living').length,
-    hidden: drawn.filter((lineage) => lineage.status === 'hidden').length,
-    extinct: drawn.filter((lineage) => lineage.status === 'extinct').length,
+    living: drawn.filter((line) => line.status === 'living').length,
+    hidden: drawn.filter((line) => line.status === 'hidden').length,
+    extinct: drawn.filter((line) => line.status === 'extinct').length,
   });
   const label = $derived(
     `Colour gene lineages from gen 0 to gen ${census.generation.toLocaleString()}: ` +
@@ -58,84 +58,92 @@
     return colours[Math.round(hue * STEPS_PER_DEGREE) % colours.length] ?? paletteCss(hue);
   }
 
-  function spoken(lineage: Lineage): string {
-    const { name, origin, now } = describeLineage(lineage);
-    return `${capitalised(name)}: ${origin}. ${now}.${lineage.id === highlighted ? ' Highlighted.' : ''}`;
+  function spoken(line: AlleleLine): string {
+    const { name, origin, now } = describeLine(line);
+    return `${capitalised(name)}: ${origin}. ${now}.${line.id === highlighted ? ' Highlighted.' : ''}`;
   }
 
   $effect(() => {
     draw(canvas, layout, drawn, highlighted, hovered?.id ?? reading);
   });
 
-  function draw(target: HTMLCanvasElement, at: ChartLayout, all: readonly Lineage[], lit: AlleleId | null, pointed: AlleleId | null): void {
+  /** Draws every line, emphasising the highlighted Allele's lineage, or else the major lines, and the line pointed at. */
+  function draw(target: HTMLCanvasElement, chart: ChartLayout, all: readonly AlleleLine[], lit: AlleleId | null, pointed: AlleleId | null): void {
     const ratio = window.devicePixelRatio || 1;
-    const [pixelWidth, pixelHeight] = [Math.round(at.width * ratio), Math.round(at.height * ratio)];
+    const [pixelWidth, pixelHeight] = [Math.round(chart.width * ratio), Math.round(chart.height * ratio)];
     if (target.width !== pixelWidth || target.height !== pixelHeight) {
       target.width = pixelWidth;
       target.height = pixelHeight;
     }
     const context = target.getContext('2d');
-    if (!context || at.width === 0) return;
+    if (!context || chart.width === 0) return;
     context.setTransform(ratio, 0, 0, ratio, 0, 0);
-    context.clearRect(0, 0, at.width, at.height);
-    const plotHeight = at.height - CHART_INSET.top - CHART_INSET.bottom;
+    context.clearRect(0, 0, chart.width, chart.height);
+    const plotHeight = chart.height - CHART_INSET.top - CHART_INSET.bottom;
     for (let y = 0; y < plotHeight; y += 2) {
       context.fillStyle = colour(Math.round((y / plotHeight) * 360) % 360);
       context.fillRect(STRIP.x, CHART_INSET.top + y, STRIP.width, 2.2);
     }
-    const emphasised = lit === null ? null : ancestry(all, lit);
-    const isOn = (lineage: Lineage): boolean => (emphasised ? emphasised.has(lineage.id) : lineage.major);
-    for (const lineage of all) {
-      const on = isOn(lineage) || lineage.id === pointed;
-      const strong = lineage.id === pointed || lineage.id === lit;
-      const living = lineage.status !== 'extinct';
-      const start = chartX(at, lineage.origin);
-      const end = Math.max(start + 1, chartX(at, lineage.lastCarried));
-      const y = chartY(at, lineage.hue);
-      context.strokeStyle = colour(lineage.hue);
+    const litLineage = lit === null ? new Set<AlleleId>() : lineage(all, lit);
+    const emphasised = (line: AlleleLine): boolean => (litLineage.size > 0 ? litLineage.has(line.id) : line.major) || line.id === pointed;
+    for (const line of all) {
+      const on = emphasised(line);
+      const thick = line.id === pointed || line.id === lit;
+      const living = line.status !== 'extinct';
+      const start = chartX(chart, line.origin);
+      const end = Math.max(start + 1, chartX(chart, line.lastCarried));
+      const y = chartY(chart, line.hue);
+      context.strokeStyle = colour(line.hue);
       context.globalAlpha = on ? (living ? 0.95 : 0.45) : 0.1;
-      if (on && lineage.sourceHue !== null) {
+      if (on && line.sourceHue !== null) {
         context.lineWidth = 1;
         context.globalAlpha *= 0.55;
         context.beginPath();
-        context.moveTo(start + 0.5, chartY(at, lineage.sourceHue));
+        context.moveTo(start + 0.5, chartY(chart, line.sourceHue));
         context.lineTo(start + 0.5, y);
         context.stroke();
         context.globalAlpha /= 0.55;
       }
-      context.lineWidth = (living ? 1.6 : 1) * (strong ? 2 : 1);
+      context.lineWidth = (living ? 1.6 : 1) * (thick ? 2 : 1);
       context.beginPath();
       context.moveTo(start, y);
       context.lineTo(end, y);
       context.stroke();
     }
-    const right = chartX(at, at.generation);
-    for (const lineage of all) {
-      if (lineage.status === 'extinct') continue;
-      context.globalAlpha = isOn(lineage) || lineage.id === pointed ? 1 : 0.2;
+    const right = chartX(chart, chart.generation);
+    for (const line of all) {
+      if (line.status === 'extinct') continue;
+      context.globalAlpha = emphasised(line) ? 1 : 0.2;
       context.beginPath();
-      context.arc(right, chartY(at, lineage.hue), 1.5 + 6.5 * Math.sqrt(lineage.share), 0, 2 * Math.PI);
-      if (lineage.status === 'hidden') {
-        context.strokeStyle = colour(lineage.hue);
+      context.arc(right, chartY(chart, line.hue), 1.5 + 6.5 * Math.sqrt(line.share), 0, 2 * Math.PI);
+      if (line.status === 'hidden') {
+        context.strokeStyle = colour(line.hue);
         context.lineWidth = 1.5;
         context.stroke();
       } else {
-        context.fillStyle = colour(lineage.hue);
+        context.fillStyle = colour(line.hue);
         context.fill();
       }
     }
     context.globalAlpha = 1;
   }
 
-  function onpointermove(event: PointerEvent): void {
+  /** The line under a pointer, with the pointer's position on the chart. */
+  function pointedAt(event: MouseEvent): { line: AlleleLine; x: number; y: number } | null {
     const bounds = canvas.getBoundingClientRect();
     const point = { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
-    const found = lineageAt(drawn, layout, point);
-    hovered = found && { id: found.id, ...point };
+    const line = lineAt(drawn, layout, point);
+    return line && { line, ...point };
   }
 
-  function onclick(): void {
-    const found = hovered && byId.get(hovered.id);
+  function onpointermove(event: PointerEvent): void {
+    const found = pointedAt(event);
+    hovered = found && { id: found.line.id, x: found.x, y: found.y };
+  }
+
+  /** Highlights the line clicked or tapped, which a tap reaches without a pointer move, or clears the highlight on a click between lines. */
+  function onclick(event: MouseEvent): void {
+    const found = pointedAt(event)?.line;
     if (found) onhighlight(found.id === highlighted ? null : found);
     else if (highlighted !== null) onhighlight(null);
   }
@@ -143,8 +151,8 @@
   function onreaderkeydown(event: KeyboardEvent): void {
     if (event.key !== 'Enter' && event.key !== ' ') return;
     event.preventDefault();
-    const lineage = order[readIndex];
-    if (lineage) onhighlight(lineage.id === highlighted ? null : lineage);
+    const line = order[readIndex];
+    if (line) onhighlight(line.id === highlighted ? null : line);
   }
 </script>
 
@@ -157,17 +165,17 @@
     <p class="visually-hidden" data-testid="lineage-summary">{label}</p>
     <canvas bind:this={canvas} aria-hidden="true" style:height="{height}px" {onpointermove} onpointerleave={() => (hovered = null)} {onclick}></canvas>
     {#if tip}
-      {@const { name, origin, now } = describeLineage(tip.lineage)}
+      {@const { name, origin, now } = describeLine(tip.line)}
       <div
         class="tip"
         aria-hidden="true"
         style:left="{tip.x + TIP.gap + TIP.width > width ? Math.max(0, tip.x - TIP.gap - TIP.width) : tip.x + TIP.gap}px"
         style:top="{Math.max(0, Math.min(height - TIP.height, tip.y + TIP.gap))}px"
       >
-        <p class="name"><span class="swatch" style:background={colour(tip.lineage.hue)}></span>{name}</p>
+        <p class="name"><span class="swatch" style:background={colour(tip.line.hue)}></span>{name}</p>
         <p>{origin}</p>
         <p>{now}</p>
-        <p class="hint">{tip.lineage.id === highlighted ? 'Click to clear the highlight' : 'Click to light up its carriers'}</p>
+        <p class="hint">{tip.line.id === highlighted ? 'Click to clear the highlight' : 'Click to light up the cells carrying it'}</p>
       </div>
     {/if}
     {#if order.length > 0}
@@ -196,6 +204,7 @@
     <span><i class="key line"></i>a colour gene</span>
     <span><i class="key dot"></i>shown now</span>
     <span><i class="key ring"></i>hidden everywhere</span>
+    <span><i class="key line faded"></i>died out</span>
   </p>
 </figure>
 
@@ -324,5 +333,9 @@
     height: 2px;
     background: linear-gradient(90deg, #7bd, #db7);
     border-radius: 1px;
+  }
+
+  .key.faded {
+    opacity: 0.45;
   }
 </style>

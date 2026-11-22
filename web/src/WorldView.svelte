@@ -16,7 +16,7 @@
   } from './lib/camera.ts';
   import { Renderer } from './lib/renderer.ts';
   import { cellsAlong } from './lib/stroke.ts';
-  import type { AlleleId, CellPosition, Frame } from './protocol.ts';
+  import type { AlleleId, CellPosition, Frame, FrameBuffers } from './protocol.ts';
 
   interface Props {
     /** What pressing and dragging on the World does. */
@@ -24,7 +24,7 @@
     /** Called once on mount with whether WebGL2 is available. */
     onsupport: (supported: boolean) => void;
     /** Called with each frame's buffers once it has been drawn or superseded. */
-    onrelease: (buffers: { phenotypes: Float32Array; carriers: Uint8Array | null }) => void;
+    onrelease: (buffers: FrameBuffers) => void;
     /** Called with the Cells a press or drag of the paint or erase tool passes over. */
     onstroke: (cells: CellPosition[]) => void;
     /** Called with the Cell the stamp tool is pressed on. */

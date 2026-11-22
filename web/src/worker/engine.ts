@@ -1,4 +1,4 @@
-import { CARRYING } from '../protocol.ts';
+import { CARRYING, transferable } from '../protocol.ts';
 import type {
   AlleleCensus,
   AlleleId,
@@ -52,8 +52,8 @@ export interface EngineWorld {
   census(): Float64Array;
   /** The Allele Tree, packed as the WASM `WebWorld` documents. */
   alleleTree(): Float64Array;
-  /** Writes the Carrier highlight of an Allele into `out` as {@link CARRYING} numbers; returns whether the World retains it. */
-  carryingCells(allele: AlleleId, out: Uint8Array): boolean;
+  /** Writes the Carrier highlight of an Allele into `out` as {@link CARRYING} numbers, all `none` once the World no longer retains it. */
+  carryingCells(allele: AlleleId, out: Uint8Array): void;
   /** The population at each Generation from 0 to the current one. */
   populationHistory(): Uint32Array;
   free(): void;
@@ -379,7 +379,6 @@ export class Engine {
     this.framePending = false;
     world.phenotypes(buffer);
     const highlight = this.highlight(world);
-    const transfer = highlight ? [buffer.buffer, highlight.carriers.buffer] : [buffer.buffer];
     this.options.send(
       {
         type: 'frame',
@@ -393,7 +392,7 @@ export class Engine {
         inspection: unpackInspection(world.inspection()),
         highlight,
       },
-      transfer,
+      transferable({ phenotypes: buffer, carriers: highlight?.carriers ?? null }),
     );
   }
 
@@ -423,12 +422,7 @@ const STATUSES: readonly AlleleStatus[] = ['living', 'hidden', 'extinct'];
 /** An inspection as the World packs it, unpacked; throws if it does not follow the packed layout. */
 function unpackInspection(packed: Float64Array | undefined): Inspection | null {
   if (!packed) return null;
-  let at = 0;
-  const next = (): number => {
-    const value = packed[at++];
-    if (value === undefined) throw new Error(`a packed inspection ends after ${packed.length} numbers`);
-    return value;
-  };
+  const next = reader(packed, 'inspection');
   const [x, y, birthGeneration, deathGeneration, phenotype] = [next(), next(), next(), next(), next()];
   const allele = (): InspectedAllele => {
     const shown = next() === 1;
@@ -500,14 +494,9 @@ const ORIGINS: readonly PedigreeOrigin[] = ['born', 'placed', 'beyond', 'unexplo
 /** A Pedigree as the World packs it, unpacked; throws if it does not follow the packed layout. */
 function unpackPedigree(packed: Float64Array | undefined): Pedigree | null {
   if (!packed) return null;
-  let at = 0;
-  const next = (): number => {
-    const value = packed[at++];
-    if (value === undefined) throw new Error(`a packed pedigree ends after ${packed.length} numbers`);
-    return value;
-  };
+  const next = reader(packed, 'pedigree');
   const organisms: Pedigree['organisms'] = [];
-  while (at < packed.length) {
+  while (next.more()) {
     const [x, y, birthGeneration, depth, origin, fromAllelePool, parentCount] = [next(), next(), next(), next(), next(), next(), next()];
     const parents = Array.from({ length: parentCount }, (): PedigreeParent => ({ organism: next(), allele: next() === 1 ? 1 : 0 }));
     const named = ORIGINS[origin];

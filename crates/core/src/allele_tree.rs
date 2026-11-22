@@ -396,9 +396,9 @@ impl AlleleTree {
         }
     }
 
-    /// Notes that live Cells carry the Alleles in `carried` in Generation
-    /// `generation`, then prunes every non-Founding Allele that is neither in
-    /// `carried` nor an ancestor of an Allele in it.
+    /// Marks the Alleles in `carried` as for [`AlleleTree::mark_carried`],
+    /// then prunes every non-Founding Allele that is neither in `carried` nor
+    /// an ancestor of an Allele in it.
     pub(crate) fn prune(&mut self, carried: impl IntoIterator<Item = Slot>, generation: u64) {
         let mut keep = vec![false; self.entries.len()];
         for slot in carried {
@@ -418,12 +418,16 @@ impl AlleleTree {
     }
 
     /// Every retained Allele, each before its descendants, in Generation
-    /// `now` with `status` giving each Allele's status.
-    pub(crate) fn nodes(&self, now: u64, status: impl Fn(Slot) -> AlleleStatus) -> Vec<AlleleNode> {
+    /// `generation` with `status` giving each Allele's status.
+    pub(crate) fn nodes(
+        &self,
+        generation: u64,
+        status: impl Fn(Slot) -> AlleleStatus,
+    ) -> Vec<AlleleNode> {
         let mut nodes: Vec<AlleleNode> = (0..self.entries.len())
             .map(Slot::at)
             .filter(|slot| self.entries[slot.index()].record.is_some())
-            .map(|slot| self.node(slot, now, &status))
+            .map(|slot| self.node(slot, generation, &status))
             .collect();
         nodes.sort_by_key(|node| (node.origin, node.id));
         nodes
@@ -434,13 +438,13 @@ impl AlleleTree {
     pub(crate) fn lineage(
         &self,
         id: AlleleId,
-        now: u64,
+        generation: u64,
         status: impl Fn(Slot) -> AlleleStatus,
     ) -> Option<Vec<AlleleNode>> {
         let mut next = Some(self.slot(id)?);
         let mut chain = vec![];
         while let Some(slot) = next {
-            chain.push(self.node(slot, now, &status));
+            chain.push(self.node(slot, generation, &status));
             next = self.record(slot).source;
         }
         Some(chain)
@@ -450,7 +454,7 @@ impl AlleleTree {
     pub(crate) fn node(
         &self,
         slot: Slot,
-        now: u64,
+        generation: u64,
         status: impl Fn(Slot) -> AlleleStatus,
     ) -> AlleleNode {
         let record = self.record(slot);
@@ -463,7 +467,7 @@ impl AlleleTree {
             last_carried: if status == AlleleStatus::Extinct {
                 record.last_carried
             } else {
-                now
+                generation
             },
             status,
         }

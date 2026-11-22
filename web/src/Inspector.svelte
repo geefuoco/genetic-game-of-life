@@ -132,7 +132,7 @@
       >
     </button>
   </header>
-  <p class="caption">One colour gene from each parent. Bars show strength. Click one to light up its carriers.</p>
+  <p class="caption">One colour gene from each parent. Bars show strength. Click one to light up the cells carrying it.</p>
   <div class="sum" role="group" aria-label="Its colour genes">
     {@render gene(order[0])}
     <span class="operator" aria-hidden="true">+</span>

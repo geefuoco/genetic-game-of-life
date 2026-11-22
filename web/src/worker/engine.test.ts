@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { initSync, WebWorld } from '../../wasm-pkg/genetic_life_wasm.js';
-import type { Census, Command, Frame, Rate, SoupSettings, WorkerEvent } from '../protocol.ts';
+import type { Census, Command, Frame, FrameBuffers, Rate, SoupSettings, WorkerEvent } from '../protocol.ts';
 import { RULE_PRESETS } from '../lib/settings.ts';
 import { Engine, type Clock, type EngineWorld } from './engine.ts';
 
@@ -72,19 +72,13 @@ interface Harness {
   cost: { msPerGeneration: number };
 }
 
-/** The buffers a frame lends the page. */
-interface Buffers {
-  phenotypes: Float32Array;
-  carriers: Uint8Array | null;
-}
-
 function harness(options: { keepUp?: boolean } = {}): Harness {
   const keepUp = options.keepUp ?? true;
   const clock = new FakeClock();
   const frames: Frame[] = [];
   const errors: string[] = [];
   const notices: Harness['notices'] = [];
-  const held: Buffers[] = [];
+  const held: FrameBuffers[] = [];
   const cost = { msPerGeneration: 0 };
   const createWorld = (soup: SoupSettings): EngineWorld => {
     const world = createWebWorld(soup);
@@ -129,12 +123,12 @@ function harness(options: { keepUp?: boolean } = {}): Harness {
     }
     const highlight = event.highlight && { ...event.highlight, carriers: event.highlight.carriers.slice() };
     frames.push({ ...event, phenotypes: event.phenotypes.slice(), highlight });
-    const buffers: Buffers = { phenotypes: event.phenotypes, carriers: event.highlight?.carriers ?? null };
+    const buffers: FrameBuffers = { phenotypes: event.phenotypes, carriers: event.highlight?.carriers ?? null };
     if (keepUp) queueRelease(buffers);
     else held.push(buffers);
   };
-  const releases: Buffers[] = [];
-  const queueRelease = (buffers: Buffers): void => {
+  const releases: FrameBuffers[] = [];
+  const queueRelease = (buffers: FrameBuffers): void => {
     releases.push(buffers);
     clock.setTimeout(() => {
       const next = releases.shift();

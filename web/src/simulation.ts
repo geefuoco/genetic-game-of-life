@@ -1,4 +1,4 @@
-import type { Census, Command, Frame, Pedigree, WorkerEvent } from './protocol.ts';
+import { transferable, type Census, type Command, type Frame, type Pedigree, type WorkerEvent } from './protocol.ts';
 
 export interface SimulationHandlers {
   frame(frame: Frame): void;
@@ -49,10 +49,8 @@ export class Simulation {
 
   /** Sends a command, transferring the buffers of a `release`. */
   send(command: Command): void {
-    if (command.type === 'release') {
-      const buffers = command.carriers ? [command.phenotypes.buffer, command.carriers.buffer] : [command.phenotypes.buffer];
-      this.worker.postMessage(command, buffers);
-    } else this.worker.postMessage(command);
+    if (command.type === 'release') this.worker.postMessage(command, transferable(command));
+    else this.worker.postMessage(command);
   }
 
   dispose(): void {

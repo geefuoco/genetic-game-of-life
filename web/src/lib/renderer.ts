@@ -28,6 +28,8 @@ const BACKGROUND = [6 / 255, 7 / 255, 10 / 255] as const;
 const DIMMED = [24 / 255, 26 / 255, 33 / 255] as const;
 /** Width of a hidden Carrier's ring as a fraction of the drawn square, and at least one device pixel. */
 const RING_FRACTION = 0.2;
+/** Strength of a hidden Carrier's colour when its square is too small to hold a ring with a hollow centre. */
+const FAINT_CARRIER = 0.45;
 /** Distance over which the World window's edges fade into the background, in CSS pixels. */
 const FADE_PX = 70;
 /** Zoom, in CSS pixels per Cell, from which Cells have a gap between them. */
@@ -96,13 +98,13 @@ void main() {
   float hue = texelFetch(u_cells, texel, 0).r;
   if (hue < 0.0) return;
   uint mark = u_highlight ? texelFetch(u_carriers, texel, 0).r : ${CARRYING.shows}u;
-  float coverage = 1.0;
-  if (u_gap > 0.0) {
-    float half_side = (u_scale - u_gap) * 0.5;
-    vec2 offset = abs(pixel - start - half_side) - (half_side - u_radius);
-    float edge = length(max(offset, 0.0)) + min(max(offset.x, offset.y), 0.0) - u_radius;
-    coverage = clamp(0.5 - edge, 0.0, 1.0);
-    if (mark == ${CARRYING.hides}u) coverage *= clamp(0.5 + edge + u_ring, 0.0, 1.0);
+  float half_side = (u_scale - u_gap) * 0.5;
+  vec2 offset = abs(pixel - start - half_side) - (half_side - u_radius);
+  float edge = length(max(offset, 0.0)) + min(max(offset.x, offset.y), 0.0) - u_radius;
+  float coverage = u_gap > 0.0 ? clamp(0.5 - edge, 0.0, 1.0) : 1.0;
+  if (mark == ${CARRYING.hides}u) {
+    bool hollow = 2.0 * half_side >= 2.0 * u_ring + 1.0;
+    coverage *= hollow ? clamp(0.5 + edge + u_ring, 0.0, 1.0) : ${FAINT_CARRIER.toFixed(2)};
   }
   vec3 shade = mark == ${CARRYING.none}u ? u_dimmed : texture(u_palette, vec2((mark == ${CARRYING.hides}u ? u_highlightHue : hue) / 360.0 + 0.5 / u_paletteSize, 0.5)).rgb;
   colour = vec4(mix(u_background, shade, coverage * alpha), 1.0);
@@ -136,8 +138,9 @@ type Uniform = (typeof UNIFORMS)[number];
  * Draws the World with WebGL2: one copy of the torus inside a window whose
  * edges fade into the background, each live Cell a rounded square in its
  * Phenotype's palette colour. Under a Carrier highlight, Cells showing the
- * Allele keep their colour, Carriers hiding it are rings in its colour, and
- * every other live Cell is dimmed.
+ * Allele keep their colour, Carriers hiding it are rings in its colour, or
+ * faint squares when too small for a ring, and every other live Cell is
+ * dimmed.
  */
 export class Renderer {
   private readonly gl: WebGL2RenderingContext;
